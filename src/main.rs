@@ -126,6 +126,12 @@ fn run() -> Result<(), String> {
         index.external,
         skipped_cross_file_locals + skipped_missing_symbols,
     );
+    if index.syntax_errors != 0 || index.unsupported_syntax_errors != 0 {
+        eprintln!(
+            "{} syntax errors, {} unsupported syntax errors",
+            index.syntax_errors, index.unsupported_syntax_errors
+        );
+    }
 
     Ok(())
 }

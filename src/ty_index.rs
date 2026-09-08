@@ -35,6 +35,8 @@ pub(crate) struct IndexData {
     pub(crate) unresolved: usize,
     pub(crate) ambiguous: usize,
     pub(crate) external: usize,
+    pub(crate) syntax_errors: usize,
+    pub(crate) unsupported_syntax_errors: usize,
     pub(crate) samples: Vec<String>,
 }
 
@@ -264,6 +266,8 @@ pub(crate) fn index(
         .map(|(index, file)| (*file, index))
         .collect::<HashMap<_, _>>();
     let mut data = Vec::with_capacity(files.len());
+    let mut syntax_errors = 0;
+    let mut unsupported_syntax_errors = 0;
     for &file in &files {
         let path = file
             .path(&db)
@@ -277,6 +281,9 @@ pub(crate) fn index(
             .replace(std::path::MAIN_SEPARATOR, "/");
         let source = source_text(&db, file).as_str().to_owned();
         let program_file = db.program_file(file);
+        let parsed = parsed_module(&db, program_file.python_file(&db)).load(&db);
+        syntax_errors += parsed.errors().len();
+        unsupported_syntax_errors += parsed.unsupported_syntax_errors().len();
         let hierarchy = ty_ide::document_symbols(&db, program_file).to_hierarchical();
         let module = file_to_module(&db, program_file.resolver_file(&db))
             .ok_or_else(|| format!("project file has no importable module name: {path}"))?;
@@ -532,6 +539,8 @@ pub(crate) fn index(
         unresolved,
         ambiguous,
         external,
+        syntax_errors,
+        unsupported_syntax_errors,
         samples,
     })
 }
