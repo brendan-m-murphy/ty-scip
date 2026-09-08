@@ -1,5 +1,13 @@
-use std::{collections::HashMap, env, fs, path::Path};
+use std::{
+    collections::HashMap,
+    ffi::OsString,
+    fs::{self, File, OpenOptions},
+    io::{self, ErrorKind, Write},
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
+use protobuf::Message;
 use ruff_source_file::{LineIndex, PositionEncoding as RuffPositionEncoding};
 use ruff_text_size::TextRange;
 use scip::{
@@ -9,8 +17,10 @@ use scip::{
         PositionEncoding, ProtocolVersion, Relationship, Signature, SingleLineRange, Symbol,
         SymbolInformation, SymbolRole, TextEncoding, ToolInfo, descriptor, symbol_information,
     },
-    write_message_to_file,
 };
+use url::Url;
+
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum DefinitionKind {
@@ -283,13 +293,18 @@ pub(crate) fn write_index(
             tool_info: Some(ToolInfo {
                 name: "ty-scip".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
-                arguments: env::args_os()
-                    .map(|argument| argument.to_string_lossy().into_owned())
-                    .collect(),
+                arguments: Vec::new(),
                 ..Default::default()
             })
             .into(),
-            project_root: file_uri(root),
+            project_root: Url::from_file_path(root)
+                .map_err(|()| {
+                    format!(
+                        "cannot convert project root {} to a file URI",
+                        root.display()
+                    )
+                })?
+                .into(),
             text_document_encoding: TextEncoding::UTF8.into(),
             ..Default::default()
         })
@@ -297,9 +312,45 @@ pub(crate) fn write_index(
         documents,
         ..Default::default()
     };
-    let temporary = output.with_extension("scip.tmp");
-    write_message_to_file(&temporary, index).map_err(|error| error.to_string())?;
-    fs::rename(&temporary, output).map_err(|error| error.to_string())
+    let bytes = index.write_to_bytes().map_err(|error| error.to_string())?;
+    atomic_write(output, &bytes).map_err(|error| error.to_string())
+}
+
+fn atomic_write(output: &Path, bytes: &[u8]) -> io::Result<()> {
+    let (temporary, mut file) = create_temporary_file(output)?;
+    let result = (|| {
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary, output)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn create_temporary_file(output: &Path) -> io::Result<(PathBuf, File)> {
+    let parent = output.parent().unwrap_or_else(|| Path::new("."));
+    let output_name = output
+        .file_name()
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "output path has no file name"))?;
+    loop {
+        let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut temporary_name = OsString::from(".");
+        temporary_name.push(output_name);
+        temporary_name.push(format!(".ty-scip-{}-{counter}.tmp", std::process::id()));
+        let temporary = parent.join(temporary_name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => return Ok((temporary, file)),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn scip_descriptor(descriptor: &SymbolDescriptor) -> Descriptor {
@@ -496,18 +547,6 @@ fn position(line_index: &LineIndex, source: &str, offset: ruff_text_size::TextSi
         location.line.to_zero_indexed() as i32,
         location.character_offset.to_zero_indexed() as i32,
     )
-}
-
-fn file_uri(path: &Path) -> String {
-    let mut uri = String::from("file://");
-    for byte in path.to_string_lossy().bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'.' | b'_' | b'~') {
-            uri.push(byte as char);
-        } else {
-            uri.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    uri
 }
 
 #[cfg(test)]
