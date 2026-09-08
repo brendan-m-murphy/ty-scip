@@ -14,3 +14,6 @@ ty_ide = { git = "https://github.com/astral-sh/ruff", rev = "12132db2885084f4b87
 ty_module_resolver = { git = "https://github.com/astral-sh/ruff", rev = "12132db2885084f4b87aafc5908e336e7b5e8fbd" }
 ty_python_core = { git = "https://github.com/astral-sh/ruff", rev = "12132db2885084f4b87aafc5908e336e7b5e8fbd" }
 ty_project = { git = "https://github.com/astral-sh/ruff", rev = "12132db2885084f4b87aafc5908e336e7b5e8fbd", default-features = false }
+
+[dev-dependencies]
+protobuf = "=3.7.2"

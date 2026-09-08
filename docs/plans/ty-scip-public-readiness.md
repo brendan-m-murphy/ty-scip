@@ -119,3 +119,13 @@ constructor/`__call__` expansion without a first-target heuristic.
 - **2026-09-08:** Promoted the completed MVP into this public-readiness plan.
   Started parallel audits of `scip-python`, the pinned public ty/Ruff surface,
   test parity, architecture, and release requirements.
+- **2026-09-08:** Completed the first parity audit. The critical gaps are
+  project/package identity, proven class-owned instance members, external
+  distribution ownership, documentation/signatures, inheritance/override
+  relationships, import/config/error fixtures, and the public CLI/release
+  surface. Diagnostics, notebooks, and roles beyond definition/read are not
+  `scip-python` parity blockers.
+- **2026-09-08:** Added decoded-protobuf test support using the already-locked
+  `protobuf` crate as a dev dependency. Keyword overload and reaching-definition
+  tests now assert exact SCIP symbols, ranges, and roles instead of relying on
+  protobuf byte substrings.

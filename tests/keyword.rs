@@ -1,5 +1,9 @@
 use std::{fs, path::PathBuf, process::Command};
 
+use scip::types::SymbolRole;
+
+mod support;
+
 #[test]
 fn resolves_cross_module_keyword_arguments_to_parameters() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/keyword");
@@ -48,18 +52,25 @@ fn resolves_cross_module_keyword_arguments_to_parameters() {
 
     let first = fs::read(&index).expect("read index");
     assert!(!first.is_empty());
+    let decoded = support::read_index(&index);
+    let caller = support::document(&decoded, "caller.py");
+    let library = support::document(&decoded, "library.py");
     assert!(
-        !first
-            .windows(b"library/time_offset().(value)".len())
-            .any(|window| window == b"library/time_offset().(value)"),
+        !library
+            .symbols
+            .iter()
+            .any(|symbol| symbol.symbol.contains("library/time_offset().(value)")),
         "lambda parameter must not inherit its enclosing function's global identity"
     );
-    assert!(
-        first
-            .windows(b"library/process().(format)".len())
-            .any(|window| window == b"library/process().(format)"),
-        "overload parameters must share one durable symbol"
-    );
+    let call = support::occurrence(caller, &[3, 17, 23]);
+    let overloads =
+        [[9, 23, 29], [13, 23, 29], [16, 18, 24]].map(|range| support::occurrence(library, &range));
+    assert!(call.symbol.contains("library/process().(format)"));
+    assert_eq!(call.symbol_roles, SymbolRole::ReadAccess as i32);
+    for definition in overloads {
+        assert_eq!(definition.symbol, call.symbol);
+        assert_eq!(definition.symbol_roles, SymbolRole::Definition as i32);
+    }
     let second = Command::new(env!("CARGO_BIN_EXE_ty-scip"))
         .arg(&root)
         .arg(&index)

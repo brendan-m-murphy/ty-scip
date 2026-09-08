@@ -1,5 +1,9 @@
 use std::{fs, path::PathBuf, process::Command};
 
+use scip::types::SymbolRole;
+
+mod support;
+
 #[test]
 fn groups_reaching_definitions_by_semantic_place() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/reaching");
@@ -34,15 +38,16 @@ fn groups_reaching_definitions_by_semantic_place() {
         );
     }
 
-    let bytes = fs::read(&index).expect("read index");
-    let local = b"local 0";
-    assert!(
-        bytes
-            .windows(local.len())
-            .filter(|window| *window == local)
-            .count()
-            >= 4,
-        "both assignments, metadata, and the read must share one local symbol"
-    );
+    let decoded = support::read_index(&index);
+    let document = support::document(&decoded, "main.py");
+    let first = support::occurrence(document, &[2, 8, 14]);
+    let second = support::occurrence(document, &[4, 8, 14]);
+    let read = support::occurrence(document, &[5, 11, 17]);
+    assert_eq!(first.symbol, second.symbol);
+    assert_eq!(first.symbol, read.symbol);
+    assert!(first.symbol.starts_with("local "));
+    assert_eq!(first.symbol_roles, SymbolRole::Definition as i32);
+    assert_eq!(second.symbol_roles, SymbolRole::Definition as i32);
+    assert_eq!(read.symbol_roles, SymbolRole::ReadAccess as i32);
     fs::remove_file(index).expect("remove test index");
 }

@@ -1889,6 +1889,7 @@ dependencies = [
 name = "ty-scip"
 version = "0.1.0"
 dependencies = [
+ "protobuf",
  "ruff_db",
  "ruff_python_ast",
  "ruff_text_size",
