@@ -18,10 +18,9 @@ drop-in symbol compatibility only after the core approach works.
 - Planning and source/API reconnaissance are complete.
 - The workspace started as an empty Git repository.
 - Phases 0 and 1 are complete. Phase 2 now has measurable resolution outcomes,
-  durable-symbol normalization, and opt-in deterministic residual samples.
-  Its next stage is to classify first-party co-definitions for which navigation
-  ranges do not yet map to a durable SCIP symbol. Richer occurrence roles
-  remain deferred.
+  durable-symbol and semantic-place normalization, and opt-in deterministic
+  residual samples. Its next stage is to promote proven instance attributes to
+  stable class-member symbols. Richer occurrence roles remain deferred.
 - Rust 1.98.1 was installed after the initial environment check. The Codex app
   shell has not refreshed its `PATH`, so commands currently use
   `/Users/bm13805/.cargo/bin/cargo` explicitly.
@@ -39,14 +38,17 @@ drop-in symbol compatibility only after the core approach works.
 - Resolution attempts now produce one deterministic summary covering files,
   definitions, resolved references, unresolved and ambiguous candidates,
   external targets, and safely skipped internal targets.
-- A fresh same-root comparison on frozen OpenGHG reports 14,634 definitions,
-  35,924 resolved references, 9,754 unresolved identifier queries, 7,870
-  ambiguous queries, 12,212 external queries, and 309 skipped internal edges.
+- A fresh same-root comparison on frozen OpenGHG reports 16,688 definition
+  occurrences, 40,738 resolved references, 9,754 unresolved
+  identifier queries, 39 ambiguous queries, 12,212 external queries, and 634
+  skipped internal edges.
   Against the previous release binary under the same environment, symbol-table
   normalization recovered 331 references and reduced ambiguity by 375 queries.
   Classifying multi-target queries whose candidates are all outside the project
   moved another 1,724 queries from ambiguous to external without changing the
-  emitted index.
+  emitted index. Semantic-place normalization then recovered 4,814 references;
+  325 cross-file instance-attribute queries became visible as conservatively
+  skipped locals rather than ambiguity.
   Earlier recorded counts used a different binary/environment and are retained
   in the progress log as historical evidence, not as this milestone's delta.
 
@@ -69,6 +71,10 @@ drop-in symbol compatibility only after the core approach works.
 - Use the public pinned `ty_python_semantic` and `ty_python_core` APIs before
   considering a Ruff fork. A fork buys private API access, not better inference,
   and carries a continuing synchronization cost.
+- Use `(scope, place)` only as an ephemeral in-run grouping key. Serialize the
+  resulting SCIP symbol, never ty's Salsa-backed IDs. Keep navigation locations
+  authoritative so this grouping augments rather than reimplements ty IDE
+  behavior.
 - Attribute the current resolution counts carefully: Ruff supplies syntax;
   ty supplies semantics; the MVP's identifier enumeration, range flattening,
   and conservative emission policy account for some omissions; and dynamic
@@ -242,16 +248,18 @@ for a focused upstream request, not a fork.
 Current direct dependencies, minimized by the external compile check:
 
 - Ruff/ty Git crates at one exact revision: `ty_project`, `ty_ide`,
-  `ty_module_resolver`, `ruff_db`, `ruff_python_ast`, and `ruff_text_size`.
+  `ty_python_core`, `ty_module_resolver`, `ruff_db`, `ruff_python_ast`, and
+  `ruff_text_size`.
 - Official `scip` Rust crate pinned to 0.10.0.
 - Avoid convenience crates until stdlib code becomes materially worse. A tiny
   CLI can initially use `std::env`; add an argument parser only when the CLI has
   enough options to justify it.
 
-If the existing symbol table cannot normalize an evidenced co-definition, add
-`ty_python_semantic` and `ty_python_core` at the same Git revision. They are
-already transitive dependencies; naming them directly should buy retained
-semantic `Definition`/place identity, not a second analyzer version.
+`ty_python_core` is named directly solely to retain semantic
+`Definition`/place identity; it was already a transitive dependency and remains
+at the same Git revision. Add `ty_python_semantic` only if typed occurrence
+resolution can replace a measured `goto_declaration` expansion artifact without
+copying analyzer logic.
 
 The repository will pin a compatible Rust toolchain once the external build has
 been proven. Ruff's inspected workspace uses Rust 2024 edition and pins a recent
@@ -390,6 +398,23 @@ be presented as a type-checker limitation.
   queries rose from 10,488 to 12,212. Definitions, references, and skipped
   edges were unchanged. The smoke fixture's overloaded `str.upper` case now
   reports external instead of ambiguous.
+- **2026-09-08:** Added a per-file navigation-range-to-semantic-place side
+  table using public `ty_python_core` APIs. Equal `(scope, place)` identities
+  collapse reaching definitions without being serialized, while missing or
+  unequal identities remain ambiguous. A focused branch fixture proves two
+  assignments and their read share one document-local SCIP symbol. A separate
+  callable-choice fixture proves candidates with distinct semantic places stay
+  ambiguous and emit no guessed edge.
+- **2026-09-08:** Frozen OpenGHG now reports 16,688 definition occurrences,
+  40,738 references, 9,754 unresolved, 39 ambiguous, 12,212 external, and 634
+  skipped queries (631 cross-file locals and three missing symbols). Compared
+  with the preceding classification milestone, this recovers 4,814 references
+  and removes 7,831 ambiguous queries. Both SCIP 0.8.1 and 0.10 lint pass.
+  A fresh `scip-cli` 2.7.0 database contains 281 documents, 464 chunks, 15,999
+  mentions, and 6,351 definition ranges; the complete #1714 search, members,
+  references, and dependencies gate still passes. A final release build indexed
+  the frozen checkout in 1.93 seconds wall time; the roughly 30-second
+  diagnostic runs were unoptimized builds and are not performance baselines.
 
 ## Deliberate follow-ups
 
@@ -398,5 +423,12 @@ be presented as a type-checker limitation.
 - Determine whether ty's public lexical-name-path support is sufficient once
   direct semantic definitions replace navigation ranges; it is currently an
   internal and incomplete helper upstream.
+- Promote cross-file `self.attr`/`cls.attr` places only after a focused fixture
+  proves their owning class can be derived safely. The current benchmark exposes
+  325 such queries as cross-file locals rather than emitting false links.
+- Leave the remaining 39 internal ambiguities unresolved. Samples show
+  constructor/`__call__` expansion and genuine callable choices; a future typed
+  occurrence path may remove editor-navigation expansion without first-target
+  guessing.
 - Add distribution name/version discovery only when external SCIP navigation
   becomes an accepted milestone.

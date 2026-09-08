@@ -1896,6 +1896,7 @@ dependencies = [
  "ty_ide",
  "ty_module_resolver",
  "ty_project",
+ "ty_python_core",
 ]
 
 [[package]]

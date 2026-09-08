@@ -27,6 +27,7 @@ use scip::{
 use ty_ide::{HierarchicalSymbols, SymbolId, SymbolInfo, SymbolKind};
 use ty_module_resolver::file_to_module;
 use ty_project::{Db as _, ProjectDatabase, ProjectMetadata, SemanticDb as _};
+use ty_python_core::{ProgramFile, place::ScopedPlaceId, scope::ScopeId, semantic_index};
 
 #[derive(Default)]
 struct IdentifierRanges(Vec<TextRange>);
@@ -41,6 +42,33 @@ impl<'ast> SourceOrderVisitor<'ast> for IdentifierRanges {
 
     fn visit_identifier(&mut self, identifier: &'ast Identifier) {
         self.0.push(identifier.range());
+    }
+}
+
+struct DefinitionBindings<'db, 'output> {
+    db: &'db dyn ty_python_core::Db,
+    program_file: ProgramFile<'db>,
+    groups: HashMap<(ScopeId<'db>, ScopedPlaceId), usize>,
+    ranges: &'output mut HashMap<TextRange, Vec<usize>>,
+}
+
+impl<'ast> SourceOrderVisitor<'ast> for DefinitionBindings<'_, '_> {
+    fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
+        if let Some(definitions) = semantic_index(self.db, self.program_file).try_definitions(node)
+        {
+            for definition in definitions {
+                let module = parsed_module(self.db, definition.python_file(self.db)).load(self.db);
+                let range = definition.focus_range(self.db, &module).range();
+                let key = (definition.scope(self.db), definition.place(self.db));
+                let next = self.groups.len();
+                let group = *self.groups.entry(key).or_insert(next);
+                let groups = self.ranges.entry(range).or_default();
+                if !groups.contains(&group) {
+                    groups.push(group);
+                }
+            }
+        }
+        TraversalSignal::Traverse
     }
 }
 
@@ -106,6 +134,7 @@ struct FileData {
     source: String,
     globals: HashMap<TextRange, SymbolData>,
     locals: HashMap<TextRange, SymbolData>,
+    semantic_bindings: HashMap<TextRange, Vec<usize>>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -197,12 +226,24 @@ fn main() -> Result<(), String> {
             }
             .visit_body(module.suite());
         }
+        let mut semantic_bindings = HashMap::new();
+        {
+            let module = parsed_module(&db, program_file.python_file(&db)).load(&db);
+            DefinitionBindings {
+                db: &db,
+                program_file,
+                groups: HashMap::new(),
+                ranges: &mut semantic_bindings,
+            }
+            .visit_body(module.suite());
+        }
         data.push(FileData {
             file,
             relative_path,
             source,
             globals,
             locals: HashMap::new(),
+            semantic_bindings,
         });
     }
 
@@ -255,6 +296,47 @@ fn main() -> Result<(), String> {
                             source_file: source_index,
                             source_range: range,
                             target_file: *target_file,
+                            target_range: *target_range,
+                        });
+                    }
+                    continue;
+                }
+                let normalized = targets
+                    .iter()
+                    .map(|(file, range)| {
+                        let file = *file_indices.get(file)?;
+                        let groups = data[file].semantic_bindings.get(range)?;
+                        (groups.len() == 1).then_some((file, groups[0]))
+                    })
+                    .collect::<Option<Vec<_>>>();
+                let mut global_symbols = targets.iter().filter_map(|(file, range)| {
+                    let file = *file_indices.get(file)?;
+                    Some(data[file].globals.get(range)?.symbol.as_str())
+                });
+                let first_global = global_symbols.next();
+                let global_symbols_agree =
+                    global_symbols.all(|candidate| Some(candidate) == first_global);
+                if let Some(normalized) = normalized
+                    && let Some(binding) = normalized.first()
+                    && normalized.iter().all(|candidate| candidate == binding)
+                    && global_symbols_agree
+                {
+                    if !targets.iter().any(|(candidate_file, candidate_range)| {
+                        file_indices.get(candidate_file) == Some(&source_index)
+                            && *candidate_range == range
+                    }) {
+                        let (target_file, target_range) = targets
+                            .iter()
+                            .find(|(file, range)| {
+                                file_indices
+                                    .get(file)
+                                    .is_some_and(|file| data[*file].globals.contains_key(range))
+                            })
+                            .unwrap_or(&targets[0]);
+                        edges.push(Edge {
+                            source_file: source_index,
+                            source_range: range,
+                            target_file: file_indices[target_file],
                             target_range: *target_range,
                         });
                     }
@@ -342,17 +424,43 @@ fn main() -> Result<(), String> {
             .collect::<Vec<_>>();
         ranges.sort_unstable_by_key(|range| (range.start(), range.end()));
         ranges.dedup();
-        for (id, range) in ranges.into_iter().enumerate() {
-            let display_name = source_slice(&file_data.source, range).to_owned();
-            file_data.locals.insert(
-                range,
-                SymbolData {
-                    symbol: format_symbol(Symbol::new_local(id)),
-                    display_name,
-                    kind: symbol_information::Kind::Variable,
-                    full_range: range,
+        let mut allocated_groups = Vec::new();
+        for range in ranges {
+            let group = file_data
+                .semantic_bindings
+                .get(&range)
+                .filter(|groups| groups.len() == 1)
+                .map(|groups| groups[0]);
+            if group.is_some_and(|group| allocated_groups.contains(&group)) {
+                continue;
+            }
+            if let Some(group) = group {
+                allocated_groups.push(group);
+            }
+            let symbol = format_symbol(Symbol::new_local(file_data.locals.len()));
+            let definition_ranges = group.map_or_else(
+                || vec![range],
+                |group| {
+                    file_data
+                        .semantic_bindings
+                        .iter()
+                        .filter_map(|(range, groups)| {
+                            (groups.len() == 1 && groups[0] == group).then_some(*range)
+                        })
+                        .collect()
                 },
             );
+            for definition_range in definition_ranges {
+                file_data.locals.insert(
+                    definition_range,
+                    SymbolData {
+                        symbol: symbol.clone(),
+                        display_name: source_slice(&file_data.source, definition_range).to_owned(),
+                        kind: symbol_information::Kind::Variable,
+                        full_range: definition_range,
+                    },
+                );
+            }
         }
     }
 
