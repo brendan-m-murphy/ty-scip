@@ -17,9 +17,11 @@ drop-in symbol compatibility only after the core approach works.
 
 - Planning and source/API reconnaissance are complete.
 - The workspace started as an empty Git repository.
-- Phases 0 and 1 are complete. Phase 2 now has measurable resolution outcomes;
-  the next target is collapsing overload candidates that share one durable
-  symbol. Richer occurrence roles remain deferred.
+- Phases 0 and 1 are complete. Phase 2 now has measurable resolution outcomes.
+  Its next stage is to retain ty's semantic definition identities long enough
+  to collapse co-definitions that share one durable SCIP symbol, then sample
+  and classify what remains unresolved or genuinely ambiguous. Richer
+  occurrence roles remain deferred.
 - Rust 1.98.1 was installed after the initial environment check. The Codex app
   shell has not refreshed its `PATH`, so commands currently use
   `/Users/bm13805/.cargo/bin/cargo` explicitly.
@@ -37,9 +39,13 @@ drop-in symbol compatibility only after the core approach works.
 - Resolution attempts now produce one deterministic summary covering files,
   definitions, resolved references, unresolved and ambiguous candidates,
   external targets, and safely skipped internal targets.
-- On frozen OpenGHG this reports 14,154 definitions, 32,741 resolved references,
-  4,612 unresolved identifier queries, 11,711 ambiguous queries, 16,740 external
-  targets, and 309 skipped internal edges.
+- A fresh same-root comparison on frozen OpenGHG reports 14,634 definitions,
+  35,924 resolved references, 9,754 unresolved identifier queries, 9,594
+  ambiguous queries, 10,488 external targets, and 309 skipped internal edges.
+  Against the previous release binary under the same environment, symbol-table
+  normalization recovered 331 references and reduced ambiguity by 375 queries.
+  Earlier recorded counts used a different binary/environment and are retained
+  in the progress log as historical evidence, not as this milestone's delta.
 
 ## Verified decisions
 
@@ -50,8 +56,20 @@ drop-in symbol compatibility only after the core approach works.
 - Use ty's project/configuration and file discovery rather than duplicate it.
 - Traverse the parsed Ruff AST once per file and resolve occurrences with ty.
 - Use the official Rust SCIP bindings and SCIP symbol utilities.
-- Prefer correct omissions over false links: unresolved or multiply resolved
-  references are counted and skipped.
+- Prefer correct omissions over false links: normalize semantic candidates
+  first, emit when they all denote one durable symbol, and skip only unresolved
+  or genuinely multiply resolved references.
+- Treat `ty_ide::goto_declaration` navigation targets as a lossy bootstrap API,
+  not the final indexing seam. It reduces semantic definitions to file/range
+  pairs and cannot preserve overload, property, or import co-definition
+  identity.
+- Use the public pinned `ty_python_semantic` and `ty_python_core` APIs before
+  considering a Ruff fork. A fork buys private API access, not better inference,
+  and carries a continuing synchronization cost.
+- Attribute the current resolution counts carefully: Ruff supplies syntax;
+  ty supplies semantics; the MVP's identifier enumeration, range flattening,
+  and conservative emission policy account for some omissions; and dynamic
+  Python or incomplete analyzer support account for others.
 - Resolution counters describe the AST identifiers queried through ty, not a
   claim that every possible Python semantic occurrence was enumerated.
 - Unsupported cross-file document-local targets are counted and skipped rather
@@ -156,9 +174,21 @@ enough for the spike.
 ### Phase 2: references
 
 1. Add names, attributes, imports, and re-exports.
-2. Add reliable occurrence roles.
-3. Count and skip ambiguous, unresolved, and external targets.
-4. Add string-annotation traversal only if the existing public submodel API
+2. Count ambiguous, unresolved, and external targets without conflating them
+   with emitted or safely skipped references.
+3. Normalize navigation candidates through already assigned durable SCIP
+   symbols before adding lower-level dependencies.
+4. Preserve `ResolvedDefinition` identity where range-to-symbol normalization
+   is insufficient for names, attributes, imports, and
+   keyword arguments; normalize overload groups and other co-definitions to a
+   durable SCIP symbol before applying the ambiguity cardinality check.
+5. Add deterministic diagnostic sampling that classifies remaining misses as
+   non-reference syntax, external dependency, true multi-symbol ambiguity,
+   analyzer limitation, or inherently dynamic Python.
+6. Add document-local fallback identities only for same-file names that can be
+   cached and reused safely. Continue omitting unresolved member accesses.
+7. Add reliable occurrence roles.
+8. Add string-annotation traversal only if the existing public submodel API
    makes it a small change.
 
 ### Phase 3: evaluation
@@ -191,14 +221,15 @@ The MVP passes only if:
 - The implementation remains a small direct adapter rather than a second
   analyzer.
 
-Stop and seek upstream support if semantic resolution requires an LSP query per
-token, copied private analyzer logic, a Ruff fork, or broad visibility changes.
-One to three small missing public APIs are grounds for a focused upstream
-request, not a fork.
+The offset-based `ty_ide` query per identifier was acceptable for the
+feasibility spike, but is not the desired final seam. Stop and seek upstream
+support if replacing it requires copied private analyzer logic, a Ruff fork, or
+broad visibility changes. One to three small missing public APIs are grounds
+for a focused upstream request, not a fork.
 
 ## Dependencies
 
-Direct Phase 0 dependencies, minimized by the external compile check:
+Current direct dependencies, minimized by the external compile check:
 
 - Ruff/ty Git crates at one exact revision: `ty_project`, `ty_ide`,
   `ty_module_resolver`, `ruff_db`, `ruff_python_ast`, and `ruff_text_size`.
@@ -206,6 +237,11 @@ Direct Phase 0 dependencies, minimized by the external compile check:
 - Avoid convenience crates until stdlib code becomes materially worse. A tiny
   CLI can initially use `std::env`; add an argument parser only when the CLI has
   enough options to justify it.
+
+If the existing symbol table cannot normalize an evidenced co-definition, add
+`ty_python_semantic` and `ty_python_core` at the same Git revision. They are
+already transitive dependencies; naming them directly should buy retained
+semantic `Definition`/place identity, not a second analyzer version.
 
 The repository will pin a compatible Rust toolchain once the external build has
 been proven. Ruff's inspected workspace uses Rust 2024 edition and pins a recent
@@ -217,7 +253,10 @@ After the prototype proves the use case, ask Astral for a small,
 analyzer-neutral occurrence API or stability/documentation for the existing
 public pieces—not SCIP-specific behavior. A useful primitive would expose an
 occurrence range, role, resolved definition candidates, enclosing definition,
-durable lexical path, and module/distribution ownership.
+durable lexical path, co-definition grouping, and module/distribution
+ownership. The strongest current gap is stable lexical symbol identity; package
+distribution name/version discovery is separate exporter work and should not
+be presented as a type-checker limitation.
 
 ## Progress log
 
@@ -302,10 +341,42 @@ durable lexical path, and module/distribution ownership.
 - **2026-09-08:** Extended the existing fixtures rather than adding a counter-
   only project. Exact summary checks now exercise nonzero unresolved,
   ambiguous, external, and cross-file-local outcomes.
+- **2026-09-08:** Compared the adapter boundary with `scip-python`. Ruff is not
+  the semantic bottleneck, and the raw unresolved/ambiguous counts do not by
+  themselves demonstrate a ty/Pyright capability gap. `scip-python` combines
+  direct Pyright-internal access with exporter-specific first-candidate,
+  document-local, import, parameter, and package-metadata policies.
+- **2026-09-08:** Chose a no-fork Phase 2 path: consume ty's public semantic
+  definitions directly, normalize co-definitions before cardinality checks,
+  classify residual misses with deterministic samples, and request only the
+  smallest missing stable API from Astral if evidence requires it.
+- **2026-09-08:** Implemented the first normalization rung without adding a
+  dependency: multiple navigation targets now emit one edge when every target
+  already maps to the same durable global SCIP symbol. Definition sites among
+  those candidates remain definition-only rather than gaining spurious reads.
+- **2026-09-08:** Extended the keyword fixture with an overloaded function.
+  Its cross-module keyword argument resolves to the shared durable parameter
+  symbol, reducing the fixture from five ambiguous queries to zero.
+- **2026-09-08:** On the same frozen OpenGHG root and environment, the previous
+  release binary reported 35,593 references and 9,969 ambiguous queries; the
+  normalized build reports 35,924 and 9,594 respectively. Both SCIP 0.8.1 and
+  0.10 lint pass. `scip-cli` 2.7.0 conversion yields 281 documents, 430 chunks,
+  15,424 mentions, and 6,351 definition ranges; the `ModelScenario` search and
+  members queries, both fp-x-flux reference queries, and `_scenario.py`
+  dependency query remain correct.
+  The baseline repository HEAD was `77622d3f369b06bb49c62158fccaeb5f602d5ad1`
+  and its retained release executable had SHA-256
+  `ea41b37471a9a5cf8f4009338301fecc4c87c2902918a20a5bf1aca1a1567119`.
+  Both binaries were run as `ty-scip <frozen-root> <output.scip>` against
+  `/private/tmp/openghg-codeintel-benchmark-20260908/source-ty-scip`, with
+  stdout discarded.
 
 ## Deliberate follow-ups
 
 - Decide the policy for a project file for which ty cannot derive an importable
   module name after observing a real case.
-- Normalize overloaded-call keyword targets before the ambiguity cardinality
-  check when multiple declarations all denote the same durable parameter.
+- Determine whether ty's public lexical-name-path support is sufficient once
+  direct semantic definitions replace navigation ranges; it is currently an
+  internal and incomplete helper upstream.
+- Add distribution name/version discovery only when external SCIP navigation
+  becomes an accepted milestone.

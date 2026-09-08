@@ -226,6 +226,36 @@ fn main() -> Result<(), String> {
                 (file.path(&db).to_string(), range.start(), range.end())
             });
             targets.dedup();
+            if targets.len() > 1 {
+                let normalized = targets
+                    .iter()
+                    .map(|(file, range)| {
+                        let file = *file_indices.get(file)?;
+                        Some((file, *range, data[file].globals.get(range)?.symbol.as_str()))
+                    })
+                    .collect::<Option<Vec<_>>>();
+                if let Some(normalized) = normalized
+                    && let Some((target_file, target_range, symbol)) = normalized.first()
+                    && normalized
+                        .iter()
+                        .all(|(_, _, candidate)| candidate == symbol)
+                {
+                    if !normalized
+                        .iter()
+                        .any(|(candidate_file, candidate_range, _)| {
+                            *candidate_file == source_index && *candidate_range == range
+                        })
+                    {
+                        edges.push(Edge {
+                            source_file: source_index,
+                            source_range: range,
+                            target_file: *target_file,
+                            target_range: *target_range,
+                        });
+                    }
+                    continue;
+                }
+            }
             match targets.as_slice() {
                 [] => unresolved += 1,
                 [(target_file, target_range)] => {
