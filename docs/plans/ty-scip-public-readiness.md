@@ -113,12 +113,12 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Preallocate every user-visible semantic definition in deterministic source
-order, then promote proven class-owned instance-member groups. Add project
-identity and the minimum public CLI/release surface after those symbol-identity
-gaps. The remaining 39 first-party ambiguities stay unresolved until typed
-occurrence resolution can remove constructor/`__call__` expansion without a
-first-target heuristic.
+Complete stable lexical identities for named nested callables and classes,
+then harden output metadata, file URIs, and atomic replacement. After that,
+add syntax-error and unreadable-file resilience before extending package
+ownership. The remaining 39 first-party ambiguities stay unresolved until a
+typed bulk occurrence API can remove constructor/`__call__` expansion without
+a first-target heuristic.
 
 ## Progress log
 
@@ -207,3 +207,23 @@ first-target heuristic.
   Dedicated decoded tests cover imports, locals, members, exception targets,
   and match bindings. OpenGHG semantic counts remained unchanged and repeated
   output stayed byte-identical.
+- **2026-09-09:** Added raw ty docstrings and deterministic Ruff-AST signatures
+  to symbol information. Modules, classes, functions, documented assignments,
+  nested functions, overloads, and getter/setter co-definitions have focused
+  decoded coverage. Hover parsing, inferred/property signatures, PEP 257/reST
+  rendering, parameter docs, and stub-to-source fallbacks remain explicit API
+  gaps. OpenGHG semantic counts were unchanged in the canonical environment.
+- **2026-09-09:** Emitted direct first-party class bases as SCIP implementation
+  relationships using one public `type_hierarchy_supertypes` query per class.
+  Focused coverage includes cross-module bases, sorted multiple inheritance,
+  and exclusion of `object`, metaclasses, and external targets. OpenGHG emitted
+  57 relationships with unchanged occurrence counters, byte-identical repeated
+  output, and about 0.05 seconds steady-state overhead. Bulk
+  `goto_type_definition` queries were prototyped and removed after causing an
+  unacceptable scale-test slowdown; reverse `goto_implementation` scans are
+  likewise not suitable for bulk override discovery. Both tested SCIP linters
+  intermittently report missing cross-document relationship targets on the
+  larger index even though every target exists in document symbol information;
+  the error set changes across runs of identical bytes, while the focused
+  cross-file fixture lints cleanly. No invalid external-symbol workaround was
+  added for that consumer defect.

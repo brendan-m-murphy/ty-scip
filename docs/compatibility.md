@@ -39,8 +39,8 @@ plan.
 | Package identity | One first-party PEP 621 or explicit name/version for the whole index | First-party, standard-library, and installed-distribution identities |
 | External links | Counted and omitted | Standard-library and third-party symbols can be emitted |
 | Occurrence roles | Definition, import, read, write, and augmented read/write | Definition and read |
-| Symbol information | Kind and display name; definitions carry enclosing ranges | Also emits richer documentation and signatures |
-| Inheritance and overrides | Inherited reads can resolve, but no SCIP relationships are emitted | Emits class/implementation relationships |
+| Symbol information | Kind, display name, raw ty docstrings, source-faithful class/function signatures, and enclosing ranges | Emits rendered documentation and signatures through Pyright internals |
+| Inheritance and overrides | Direct first-party class bases are emitted as implementation relationships; inherited reads resolve | Emits class/implementation relationships, including richer internal cases |
 | Symbol scheme | `ty-scip`; intentionally not symbol-compatible | `scip-python` scheme |
 | SCIP ranges | SCIP 0.10 typed plus legacy fields | Legacy-consumer compatible |
 | Diagnostics and notebooks | Not emitted | Not emitted; not a parity blocker |
@@ -97,9 +97,11 @@ Known conservative omissions include:
 - genuinely dynamic attributes and imports;
 - string references such as string annotations, pytest fixture names, and
   `__slots__` entries;
-- inherited/override relationships, implementations, and type-definition
+- method-override, type-definition, external-base, and dynamic-base
   relationships;
-- documentation, signatures, diagnostics, and call hierarchy; and
+- rendered/normalized docs, inferred and property-specific signatures,
+  parameter docs, stub-to-source doc fallback, diagnostics, and call hierarchy;
+  and
 - exact `scip-python` symbol compatibility.
 
 ## Evaluated ty/Ruff API surface
@@ -115,10 +117,10 @@ blindly reimplemented:
 | --- | --- | --- |
 | `semantic_tokens` | Precise token ranges and modifiers, including some string annotations | Deferred: it does not provide durable targets or read/write roles by itself |
 | `find_references` and document highlights | Reference and local read/write evidence | Keep as fixture/oracle tools; Ruff syntax contexts provide production roles without reverse workspace scans |
-| `type_hierarchy_supertypes` | Direct base-class information | Deferred until SCIP relationship emission has focused fixtures |
-| `goto_implementation` | Implementation targets | Deferred with inheritance/override relationships |
-| `goto_type_definition` | Type targets for expressions | Deferred until the intended SCIP representation is proven |
-| `hover` | Rendered signatures and documentation | Deferred: extracting stable structured symbol information from display text would be brittle |
+| `type_hierarchy_supertypes` | Direct base-class information | Used once per indexed class to emit first-party implementation relationships |
+| `goto_implementation` | Implementation targets | Not used: its reverse, per-cursor project scan is unsuitable for bulk override indexing |
+| `goto_type_definition` | Type targets for expressions | Explored, then deferred: per-definition cursor queries caused an unacceptable OpenGHG slowdown |
+| `hover` | Rendered signatures and documentation | Not parsed: raw public definition docstrings and Ruff-AST headers are emitted instead |
 | method decorators and semantic place tables | Distinguish and prove class-owned members | Place evidence is used; decorated methods remain gated until receiver behavior is proven |
 | module/dependency ownership | Basis for external package identities | Deferred until distribution and standard-library identities are trustworthy |
 

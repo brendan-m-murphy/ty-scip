@@ -81,8 +81,10 @@ The current index includes:
 - normalization of overloads and repeated definitions that denote one binding;
 - class-member identities for instance attributes that ty proves belong to a
   direct, undecorated method's class, including inherited reads;
+- direct first-party class-base implementation relationships;
 - SCIP definition, import, read, write, and augmented read/write roles, symbol
-  kinds, display names, and enclosing ranges; and
+  kinds, display names, docstrings, source-faithful class/function signatures,
+  and enclosing ranges; and
 - both SCIP 0.10 typed ranges and equivalent legacy range fields.
 
 Missing semantic evidence is an omission, not a guessed link. Standard-library
