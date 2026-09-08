@@ -6,8 +6,8 @@ use scip::{
     symbol::{format_symbol, parse_symbol},
     types::{
         Descriptor, Document, Index, Metadata, MultiLineRange, Occurrence, Package,
-        PositionEncoding, ProtocolVersion, Signature, SingleLineRange, Symbol, SymbolInformation,
-        SymbolRole, TextEncoding, ToolInfo, descriptor, symbol_information,
+        PositionEncoding, ProtocolVersion, Relationship, Signature, SingleLineRange, Symbol,
+        SymbolInformation, SymbolRole, TextEncoding, ToolInfo, descriptor, symbol_information,
     },
     write_message_to_file,
 };
@@ -74,6 +74,7 @@ pub(crate) struct FileData {
     pub(crate) semantic_bindings: HashMap<TextRange, Vec<usize>>,
     pub(crate) canonical_definition_ranges: HashMap<TextRange, TextRange>,
     pub(crate) occurrence_roles: HashMap<TextRange, i32>,
+    pub(crate) relationships: Vec<RelationshipEdge>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -82,6 +83,12 @@ pub(crate) struct Edge {
     pub(crate) source_range: TextRange,
     pub(crate) target_file: usize,
     pub(crate) target_range: TextRange,
+}
+
+#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct RelationshipEdge {
+    pub(crate) source_symbol: String,
+    pub(crate) target_symbol: String,
 }
 
 pub(crate) fn global_symbol(
@@ -201,7 +208,7 @@ pub(crate) fn write_index(
         .map(|file| Document {
             language: "python".into(),
             relative_path: file.relative_path.clone(),
-            symbols: symbol_information(&file.globals, &file.locals),
+            symbols: symbol_information(&file.globals, &file.locals, &file.relationships),
             position_encoding: PositionEncoding::UTF8CodeUnitOffsetFromLineStart.into(),
             ..Default::default()
         })
@@ -331,6 +338,7 @@ fn symbol_kind(kind: DefinitionKind) -> symbol_information::Kind {
 fn symbol_information(
     globals: &HashMap<TextRange, SymbolData>,
     locals: &HashMap<TextRange, SymbolData>,
+    relationships: &[RelationshipEdge],
 ) -> Vec<SymbolInformation> {
     let mut symbols = globals.iter().chain(locals).collect::<Vec<_>>();
     symbols.sort_by(|(left_range, left), (right_range, right)| {
@@ -360,9 +368,19 @@ fn symbol_information(
             }
             continue;
         }
+        let symbol_relationships = relationships
+            .iter()
+            .filter(|relationship| relationship.source_symbol == symbol.symbol)
+            .map(|relationship| Relationship {
+                symbol: relationship.target_symbol.clone(),
+                is_implementation: true,
+                ..Default::default()
+            })
+            .collect();
         information.push(SymbolInformation {
             symbol: symbol.symbol.clone(),
             documentation: symbol.documentation.clone(),
+            relationships: symbol_relationships,
             kind: symbol_kind(symbol.kind).into(),
             display_name: symbol.display_name.clone(),
             signature_documentation: symbol.signature.as_deref().map(python_signature).into(),
@@ -575,7 +593,7 @@ mod tests {
             (TextRange::new(10.into(), 11.into()), symbol("earlier", 10)),
         ]);
 
-        let information = symbol_information(&globals, &locals);
+        let information = symbol_information(&globals, &locals, &[]);
 
         assert_eq!(information.len(), 1);
         assert_eq!(information[0].display_name, "earlier");

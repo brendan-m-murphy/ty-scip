@@ -23,8 +23,9 @@ use ty_python_core::{
 };
 
 use crate::scip_emit::{
-    DefinitionKind, DescriptorKind, Edge, FileData, PackageIdentity, SymbolData, SymbolDescriptor,
-    global_symbol, is_named_member, local_symbol, member_symbol, parameter_symbol,
+    DefinitionKind, DescriptorKind, Edge, FileData, PackageIdentity, RelationshipEdge, SymbolData,
+    SymbolDescriptor, global_symbol, is_named_member, local_symbol, member_symbol,
+    parameter_symbol,
 };
 
 pub(crate) struct IndexData {
@@ -340,7 +341,13 @@ pub(crate) fn index(
             semantic_bindings,
             canonical_definition_ranges,
             occurrence_roles,
+            relationships: Vec::new(),
         });
+    }
+
+    let relationships = collect_relationships(&db, &files, &file_indices, &data);
+    for (file, relationships) in data.iter_mut().zip(relationships) {
+        file.relationships = relationships;
     }
 
     let mut edges = Vec::new();
@@ -527,6 +534,66 @@ pub(crate) fn index(
         external,
         samples,
     })
+}
+
+fn collect_relationships(
+    db: &ProjectDatabase,
+    files: &[ruff_db::files::File],
+    file_indices: &HashMap<ruff_db::files::File, usize>,
+    data: &[FileData],
+) -> Vec<Vec<RelationshipEdge>> {
+    let mut relationships = vec![Vec::new(); data.len()];
+
+    for (source_file, file) in data.iter().enumerate() {
+        let program_file = db.program_file(files[source_file]);
+        let mut classes = file
+            .globals
+            .iter()
+            .filter(|(_, symbol)| symbol.kind == DefinitionKind::Class)
+            .collect::<Vec<_>>();
+        classes.sort_by_key(|(range, symbol)| (symbol.symbol.as_str(), range.start(), range.end()));
+        classes.dedup_by(|(_, left), (_, right)| left.symbol == right.symbol);
+        for (source_range, source) in classes {
+            for target in ty_ide::type_hierarchy_supertypes(db, program_file, source_range.start())
+            {
+                let Some(target) =
+                    first_party_global(file_indices, data, target.file, target.selection_range)
+                else {
+                    continue;
+                };
+                if source.symbol != target.symbol {
+                    relationships[source_file].push(RelationshipEdge {
+                        source_symbol: source.symbol.clone(),
+                        target_symbol: target.symbol.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    for relationships in &mut relationships {
+        relationships.sort();
+        relationships.dedup();
+    }
+    relationships
+}
+
+fn first_party_global<'a>(
+    file_indices: &HashMap<ruff_db::files::File, usize>,
+    data: &'a [FileData],
+    target_file: ruff_db::files::File,
+    target_range: TextRange,
+) -> Option<&'a SymbolData> {
+    let target_file = *file_indices.get(&target_file)?;
+    let target_range = data[target_file]
+        .canonical_definition_ranges
+        .get(&target_range)
+        .copied()
+        .unwrap_or(target_range);
+    data[target_file]
+        .globals
+        .get(&target_range)
+        .filter(|symbol| symbol.kind == DefinitionKind::Class && !symbol.is_local())
 }
 
 fn package_identity(
