@@ -17,7 +17,7 @@ use ty_python_core::{ProgramFile, place::ScopedPlaceId, scope::ScopeId, semantic
 
 use crate::scip_emit::{
     DefinitionKind, DescriptorKind, Edge, FileData, SymbolData, SymbolDescriptor, global_symbol,
-    local_symbol, parameter_symbol,
+    is_named_member, local_symbol, member_symbol, parameter_symbol,
 };
 
 pub(crate) struct IndexData {
@@ -49,6 +49,69 @@ impl<'ast> SourceOrderVisitor<'ast> for IdentifierRanges {
 struct ParameterSymbols<'symbols> {
     callables: Vec<Option<SymbolData>>,
     globals: &'symbols mut HashMap<TextRange, SymbolData>,
+}
+
+#[derive(Clone)]
+struct InstanceAttributeCandidate {
+    attribute_range: TextRange,
+    class: SymbolData,
+    name: String,
+}
+
+struct InstanceAttributeCandidates<'symbols> {
+    classes: Vec<(usize, Option<SymbolData>)>,
+    callables: Vec<Option<SymbolData>>,
+    globals: &'symbols HashMap<TextRange, SymbolData>,
+    candidates: HashMap<TextRange, InstanceAttributeCandidate>,
+}
+
+impl<'ast> SourceOrderVisitor<'ast> for InstanceAttributeCandidates<'_> {
+    fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
+        match node {
+            AnyNodeRef::StmtClassDef(class) => self.classes.push((
+                self.callables.len(),
+                self.globals.get(&class.name.range()).cloned(),
+            )),
+            AnyNodeRef::StmtFunctionDef(function) => {
+                let class = self
+                    .classes
+                    .last()
+                    .filter(|(callable_depth, _)| {
+                        *callable_depth == self.callables.len()
+                            && function.decorator_list.is_empty()
+                    })
+                    .and_then(|(_, class)| class.clone());
+                self.callables.push(class);
+            }
+            AnyNodeRef::ExprLambda(_) => self.callables.push(None),
+            AnyNodeRef::ExprAttribute(attribute) => {
+                if let Some(Some(class)) = self.callables.last() {
+                    self.candidates.insert(
+                        attribute.range(),
+                        InstanceAttributeCandidate {
+                            attribute_range: attribute.attr.range(),
+                            class: class.clone(),
+                            name: attribute.attr.to_string(),
+                        },
+                    );
+                }
+            }
+            _ => {}
+        }
+        TraversalSignal::Traverse
+    }
+
+    fn leave_node(&mut self, node: AnyNodeRef<'ast>) {
+        match node {
+            AnyNodeRef::StmtClassDef(_) => {
+                self.classes.pop();
+            }
+            AnyNodeRef::StmtFunctionDef(_) | AnyNodeRef::ExprLambda(_) => {
+                self.callables.pop();
+            }
+            _ => {}
+        }
+    }
 }
 
 impl<'ast> SourceOrderVisitor<'ast> for ParameterSymbols<'_> {
@@ -144,7 +207,7 @@ pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<Inde
             }
             .visit_body(module.suite());
         }
-        let (locals, semantic_bindings) =
+        let (locals, semantic_bindings, canonical_definition_ranges) =
             allocate_semantic_symbols(&db, program_file, &source, &mut globals);
         data.push(FileData {
             relative_path,
@@ -152,6 +215,7 @@ pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<Inde
             globals,
             locals,
             semantic_bindings,
+            canonical_definition_ranges,
         });
     }
 
@@ -175,7 +239,16 @@ pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<Inde
             let mut targets = ty_ide::goto_declaration(&db, program_file, range.start())
                 .into_iter()
                 .flat_map(|result| result.value)
-                .map(|target| (target.file(), target.focus_range()))
+                .map(|target| {
+                    let file = target.file();
+                    let range = target.focus_range();
+                    let range = file_indices
+                        .get(&file)
+                        .and_then(|index| data[*index].canonical_definition_ranges.get(&range))
+                        .copied()
+                        .unwrap_or(range);
+                    (file, range)
+                })
                 .collect::<Vec<_>>();
             targets.sort_unstable_by_key(|(file, range)| {
                 (file.path(&db).to_string(), range.start(), range.end())
@@ -332,28 +405,64 @@ pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<Inde
     })
 }
 
+type AllocatedSemanticSymbols = (
+    HashMap<TextRange, SymbolData>,
+    HashMap<TextRange, Vec<usize>>,
+    HashMap<TextRange, TextRange>,
+);
+
 fn allocate_semantic_symbols<'db>(
     db: &'db dyn ty_python_core::Db,
     program_file: ProgramFile<'db>,
     source: &str,
     globals: &mut HashMap<TextRange, SymbolData>,
-) -> (
-    HashMap<TextRange, SymbolData>,
-    HashMap<TextRange, Vec<usize>>,
-) {
+) -> AllocatedSemanticSymbols {
     let index = semantic_index(db, program_file);
     let module = parsed_module(db, program_file.python_file(db)).load(db);
+    let mut attribute_candidates = InstanceAttributeCandidates {
+        classes: Vec::new(),
+        callables: Vec::new(),
+        globals,
+        candidates: HashMap::new(),
+    };
+    attribute_candidates.visit_body(module.suite());
     let mut definitions = Vec::new();
+    let mut instance_symbols = HashMap::new();
+    let mut canonical_definition_ranges = HashMap::new();
+    let mut definition_full_ranges = HashMap::new();
     for scope in index.scope_ids() {
         for (_, definition, _) in index
             .use_def_map(scope.file_scope_id(db))
             .definitions_with_usage()
         {
             if definition.kind(db).is_user_visible() {
-                definitions.push((
-                    (definition.scope(db), definition.place(db)),
-                    definition.focus_range(db, &module).range(),
-                ));
+                let raw_range = definition.focus_range(db, &module).range();
+                let range = attribute_candidates
+                    .candidates
+                    .get(&raw_range)
+                    .filter(|candidate| {
+                        ty_python_core::place_table(db, definition.scope(db))
+                            .member_id_by_instance_attribute_name(&candidate.name)
+                            .is_some_and(|member| definition.place(db) == member.into())
+                    })
+                    .map_or(raw_range, |candidate| {
+                        let mut symbol =
+                            member_symbol(&candidate.class, candidate.name.clone(), raw_range);
+                        if let Some((_, existing)) = globals
+                            .iter()
+                            .filter(|(_, existing)| {
+                                is_named_member(&candidate.class, existing, &candidate.name)
+                            })
+                            .min_by_key(|(range, _)| (range.start(), range.end()))
+                        {
+                            symbol = existing.clone();
+                        }
+                        instance_symbols.insert(candidate.attribute_range, symbol);
+                        canonical_definition_ranges.insert(raw_range, candidate.attribute_range);
+                        definition_full_ranges.insert(candidate.attribute_range, raw_range);
+                        candidate.attribute_range
+                    });
+                definitions.push(((definition.scope(db), definition.place(db)), range));
             }
         }
     }
@@ -386,7 +495,10 @@ fn allocate_semantic_symbols<'db>(
         if ranges.is_empty() {
             continue;
         }
-        let existing = ranges.iter().find_map(|range| globals.get(range)).cloned();
+        let existing = ranges
+            .iter()
+            .find_map(|range| globals.get(range).or_else(|| instance_symbols.get(range)))
+            .cloned();
         let symbol = existing.unwrap_or_else(|| {
             let display_name = ranges
                 .iter()
@@ -399,8 +511,9 @@ fn allocate_semantic_symbols<'db>(
             symbol
         });
         for range in ranges {
+            let full_range = definition_full_ranges.get(&range).copied().unwrap_or(range);
             let symbol = SymbolData {
-                full_range: range,
+                full_range,
                 ..symbol.clone()
             };
             if symbol.is_local() {
@@ -410,7 +523,7 @@ fn allocate_semantic_symbols<'db>(
             }
         }
     }
-    (locals, semantic_bindings)
+    (locals, semantic_bindings, canonical_definition_ranges)
 }
 
 fn collect_global_symbols(

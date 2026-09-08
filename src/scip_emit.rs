@@ -63,6 +63,7 @@ pub(crate) struct FileData {
     pub(crate) globals: HashMap<TextRange, SymbolData>,
     pub(crate) locals: HashMap<TextRange, SymbolData>,
     pub(crate) semantic_bindings: HashMap<TextRange, Vec<usize>>,
+    pub(crate) canonical_definition_ranges: HashMap<TextRange, TextRange>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -113,6 +114,42 @@ pub(crate) fn parameter_symbol(
         kind: DefinitionKind::Parameter,
         full_range,
     }
+}
+
+pub(crate) fn member_symbol(
+    parent: &SymbolData,
+    name: String,
+    full_range: TextRange,
+) -> SymbolData {
+    let mut symbol = parse_symbol(&parent.symbol).expect("ty-scip formatted symbol");
+    symbol.descriptors.push(Descriptor {
+        name: name.clone(),
+        suffix: descriptor::Suffix::Term.into(),
+        ..Default::default()
+    });
+    SymbolData {
+        symbol: format_symbol(symbol),
+        display_name: name,
+        kind: DefinitionKind::Field,
+        full_range,
+    }
+}
+
+pub(crate) fn is_named_member(parent: &SymbolData, member: &SymbolData, name: &str) -> bool {
+    let Ok(parent) = parse_symbol(&parent.symbol) else {
+        return false;
+    };
+    let Ok(member) = parse_symbol(&member.symbol) else {
+        return false;
+    };
+    member.scheme == parent.scheme
+        && member.package == parent.package
+        && member.descriptors.len() == parent.descriptors.len() + 1
+        && member.descriptors.starts_with(&parent.descriptors)
+        && member
+            .descriptors
+            .last()
+            .is_some_and(|item| item.name == name)
 }
 
 pub(crate) fn local_symbol(
