@@ -43,6 +43,12 @@ pub(crate) struct SymbolDescriptor {
     pub(crate) kind: DescriptorKind,
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct PackageIdentity {
+    pub(crate) name: String,
+    pub(crate) version: String,
+}
+
 #[derive(Clone)]
 pub(crate) struct SymbolData {
     pub(crate) symbol: String,
@@ -75,6 +81,7 @@ pub(crate) struct Edge {
 }
 
 pub(crate) fn global_symbol(
+    package: &PackageIdentity,
     descriptors: &[SymbolDescriptor],
     display_name: String,
     kind: DefinitionKind,
@@ -85,6 +92,8 @@ pub(crate) fn global_symbol(
             scheme: "ty-scip".into(),
             package: Some(Package {
                 manager: "python".into(),
+                name: package.name.clone(),
+                version: package.version.clone(),
                 ..Default::default()
             })
             .into(),

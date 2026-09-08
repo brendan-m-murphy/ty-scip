@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use ruff_db::{
     parsed::parsed_module,
@@ -16,8 +16,8 @@ use ty_project::{Db as _, ProjectDatabase, ProjectMetadata, SemanticDb as _};
 use ty_python_core::{ProgramFile, place::ScopedPlaceId, scope::ScopeId, semantic_index};
 
 use crate::scip_emit::{
-    DefinitionKind, DescriptorKind, Edge, FileData, SymbolData, SymbolDescriptor, global_symbol,
-    is_named_member, local_symbol, member_symbol, parameter_symbol,
+    DefinitionKind, DescriptorKind, Edge, FileData, PackageIdentity, SymbolData, SymbolDescriptor,
+    global_symbol, is_named_member, local_symbol, member_symbol, parameter_symbol,
 };
 
 pub(crate) struct IndexData {
@@ -144,7 +144,12 @@ impl<'ast> SourceOrderVisitor<'ast> for ParameterSymbols<'_> {
     }
 }
 
-pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<IndexData, String> {
+pub(crate) fn index(
+    discovery_root: PathBuf,
+    sample_limit: usize,
+    project_name: Option<String>,
+    project_version: Option<String>,
+) -> Result<IndexData, String> {
     let system_root = SystemPathBuf::from_path_buf(discovery_root)
         .map_err(|path| format!("project path is not UTF-8: {}", path.display()))?;
     let system = OsSystem::new(&system_root);
@@ -152,6 +157,7 @@ pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<Inde
         ProjectMetadata::discover(&system_root, &system).map_err(|error| error.to_string())?;
     let db = ProjectDatabase::fallible(metadata, system).map_err(|error| error.to_string())?;
     let root = db.project().root(&db).as_std_path().to_path_buf();
+    let package = package_identity(&root, project_name, project_version)?;
 
     let mut files = db.project().files(&db).iter().collect::<Vec<_>>();
     files.sort_by_key(|file| file.path(&db).to_string());
@@ -190,6 +196,7 @@ pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<Inde
             .map(|descriptor| descriptor.name.clone())
             .unwrap_or_default();
         let module_symbol = global_symbol(
+            &package,
             &module_descriptors,
             module_name,
             DefinitionKind::Module,
@@ -197,7 +204,14 @@ pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<Inde
         );
         let mut globals = HashMap::from([(TextRange::default(), module_symbol)]);
         for (id, info) in hierarchy.iter() {
-            collect_global_symbols(&hierarchy, id, info, &module_descriptors, &mut globals);
+            collect_global_symbols(
+                &hierarchy,
+                id,
+                info,
+                &package,
+                &module_descriptors,
+                &mut globals,
+            );
         }
         {
             let module = parsed_module(&db, program_file.python_file(&db)).load(&db);
@@ -405,6 +419,34 @@ pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<Inde
     })
 }
 
+fn package_identity(
+    root: &std::path::Path,
+    name_override: Option<String>,
+    version_override: Option<String>,
+) -> Result<PackageIdentity, String> {
+    let path = root.join("pyproject.toml");
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    let document = contents
+        .parse::<toml::Table>()
+        .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
+    let project = document.get("project").and_then(toml::Value::as_table);
+    let field = |name| {
+        project
+            .and_then(|project| project.get(name))
+            .and_then(toml::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    Ok(PackageIdentity {
+        name: name_override.unwrap_or_else(|| field("name")),
+        version: version_override.unwrap_or_else(|| field("version")),
+    })
+}
+
 type AllocatedSemanticSymbols = (
     HashMap<TextRange, SymbolData>,
     HashMap<TextRange, Vec<usize>>,
@@ -530,6 +572,7 @@ fn collect_global_symbols(
     hierarchy: &HierarchicalSymbols,
     id: SymbolId,
     info: SymbolInfo<'_>,
+    package: &PackageIdentity,
     parents: &[SymbolDescriptor],
     output: &mut HashMap<TextRange, SymbolData>,
 ) {
@@ -542,6 +585,7 @@ fn collect_global_symbols(
     output.insert(
         info.name_range,
         global_symbol(
+            package,
             &descriptors,
             info.name.to_string(),
             definition_kind,
@@ -555,7 +599,7 @@ fn collect_global_symbols(
         return;
     }
     for (child_id, child) in hierarchy.children(id) {
-        collect_global_symbols(hierarchy, child_id, child, &descriptors, output);
+        collect_global_symbols(hierarchy, child_id, child, package, &descriptors, output);
     }
 }
 

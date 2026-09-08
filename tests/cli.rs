@@ -24,6 +24,8 @@ fn supports_public_command_line_conventions() {
     let help = Command::new(binary).arg("--help").output().expect("help");
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).starts_with("Usage: ty-scip"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--project-name NAME"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--project-version VERSION"));
     assert!(help.stderr.is_empty());
 
     let version = Command::new(binary)
@@ -72,6 +74,16 @@ fn supports_public_command_line_conventions() {
     assert_eq!(
         String::from_utf8_lossy(&invalid.stderr).trim(),
         "ty-scip: unknown option --unknown; try `ty-scip --help`"
+    );
+
+    let missing_value = Command::new(binary)
+        .arg("--project-name")
+        .output()
+        .expect("reject missing option value");
+    assert!(!missing_value.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&missing_value.stderr).trim(),
+        "ty-scip: --project-name requires a value"
     );
 
     let extra = Command::new(binary)

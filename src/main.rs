@@ -1,9 +1,9 @@
-use std::{env, path::PathBuf, process};
+use std::{env, ffi::OsString, path::PathBuf, process};
 
 mod scip_emit;
 mod ty_index;
 
-const USAGE: &str = "Usage: ty-scip [PROJECT_ROOT] [OUTPUT.scip]\n\nIndexes a Python project into index.scip by default.";
+const USAGE: &str = "Usage: ty-scip [OPTIONS] [PROJECT_ROOT] [OUTPUT.scip]\n\nIndexes a Python project into index.scip by default.\n\nOptions:\n  --project-name NAME       Override the SCIP package name\n  --project-version VERSION Override the SCIP package version\n  -h, --help                Print help\n  -V, --version             Print version";
 
 fn main() {
     if let Err(error) = run() {
@@ -15,25 +15,52 @@ fn main() {
 fn run() -> Result<(), String> {
     let caller_directory = env::current_dir()
         .map_err(|error| format!("cannot determine the current directory: {error}"))?;
-    let arguments = env::args_os().skip(1).collect::<Vec<_>>();
-    if arguments.len() == 1 && matches!(arguments[0].to_str(), Some("-h" | "--help")) {
-        println!("{USAGE}");
-        return Ok(());
+    let mut arguments = env::args_os().skip(1);
+    let mut positionals = Vec::new();
+    let mut project_name = None;
+    let mut project_version = None;
+    let mut options = true;
+    while let Some(argument) = arguments.next() {
+        let text = argument.to_str();
+        if options {
+            match text {
+                Some("--") => {
+                    options = false;
+                    continue;
+                }
+                Some("-h" | "--help") => {
+                    println!("{USAGE}");
+                    return Ok(());
+                }
+                Some("-V" | "--version") => {
+                    println!("ty-scip {}", env!("CARGO_PKG_VERSION"));
+                    return Ok(());
+                }
+                Some("--project-name") => {
+                    project_name = Some(option_value("--project-name", arguments.next())?);
+                    continue;
+                }
+                Some("--project-version") => {
+                    project_version = Some(option_value("--project-version", arguments.next())?);
+                    continue;
+                }
+                Some(value) if value.starts_with("--project-name=") => {
+                    project_name = Some(value["--project-name=".len()..].to_owned());
+                    continue;
+                }
+                Some(value) if value.starts_with("--project-version=") => {
+                    project_version = Some(value["--project-version=".len()..].to_owned());
+                    continue;
+                }
+                Some(value) if value.starts_with('-') => {
+                    return Err(format!("unknown option {value}; try `ty-scip --help`"));
+                }
+                _ => {}
+            }
+        }
+        positionals.push(argument);
     }
-    if arguments.len() == 1 && matches!(arguments[0].to_str(), Some("-V" | "--version")) {
-        println!("ty-scip {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
-    }
-    if let Some(option) = arguments
-        .iter()
-        .find(|argument| argument.to_string_lossy().starts_with('-'))
-    {
-        return Err(format!(
-            "unknown option {}; try `ty-scip --help`",
-            option.to_string_lossy()
-        ));
-    }
-    if arguments.len() > 2 {
+    if positionals.len() > 2 {
         return Err(format!("expected at most two arguments\n{USAGE}"));
     }
 
@@ -44,7 +71,7 @@ fn run() -> Result<(), String> {
         Err(env::VarError::NotPresent) => 0,
         Err(error) => return Err(format!("invalid TY_SCIP_SAMPLE_LIMIT: {error}")),
     };
-    let root = arguments.first().map_or_else(
+    let root = positionals.first().map_or_else(
         || Ok(caller_directory.clone()),
         |path| {
             let path = PathBuf::from(path);
@@ -52,11 +79,11 @@ fn run() -> Result<(), String> {
                 .map_err(|error| format!("cannot resolve project root {}: {error}", path.display()))
         },
     )?;
-    let output = arguments
+    let output = positionals
         .get(1)
         .map_or_else(|| caller_directory.join("index.scip"), PathBuf::from);
 
-    let index = ty_index::index(root, sample_limit)?;
+    let index = ty_index::index(root, sample_limit, project_name, project_version)?;
     for sample in &index.samples {
         eprintln!("{sample}");
     }
@@ -101,4 +128,11 @@ fn run() -> Result<(), String> {
     );
 
     Ok(())
+}
+
+fn option_value(option: &str, value: Option<OsString>) -> Result<String, String> {
+    value
+        .ok_or_else(|| format!("{option} requires a value"))?
+        .into_string()
+        .map_err(|_| format!("{option} value must be UTF-8"))
 }

@@ -1,0 +1,5 @@
+[project]
+name = "dynamic-example"
+dynamic = ["version"]
+
+[tool.ty]
