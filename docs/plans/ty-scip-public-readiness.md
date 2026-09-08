@@ -188,3 +188,22 @@ first-target heuristic.
   defaults to `index.scip`, normal stdout is quiet, and errors use an actionable
   `ty-scip:` prefix. Tests now decode SCIP edges instead of treating debug edge
   output as a contract.
+- **2026-09-08:** Added stable first-party package identity without claiming
+  `scip-python` symbol compatibility. Explicit name/version flags override
+  static PEP 621 metadata, which overrides an empty deterministic fallback.
+  `src/` remains a filesystem layout rather than a module descriptor. OpenGHG
+  resolution counts and lint results were unchanged.
+- **2026-09-08:** Mapped trustworthy richer occurrence roles. Ruff syntax
+  contexts can supply read, write, delete, import, and direct augmented
+  read/write roles without workspace rescans; semantic definitions overlay the
+  definition bit. String annotations, pytest fixture strings, `__slots__`, and
+  speculative generated/test roles remain deferred. `scip-python` itself emits
+  only definition/read, so this is a useful extension rather than a parity
+  blocker.
+- **2026-09-09:** Emitted definition, import, read, write, and augmented
+  read/write roles from Ruff syntax plus ty's semantic import classification.
+  Exact duplicate range/symbol occurrences merge deterministically while
+  preserving definition enclosing metadata; different symbols never merge.
+  Dedicated decoded tests cover imports, locals, members, exception targets,
+  and match bindings. OpenGHG semantic counts remained unchanged and repeated
+  output stayed byte-identical.

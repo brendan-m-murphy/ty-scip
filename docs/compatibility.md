@@ -1,0 +1,166 @@
+# Compatibility and limitations
+
+`ty-scip` aims for useful semantic parity with `scip-python`, not identical
+protobuf bytes or symbol strings. Its safety rule is simple: omit a link when
+the available ty evidence does not identify one durable symbol.
+
+## SCIP consumers
+
+Every occurrence contains both forms of its range:
+
+- SCIP 0.10 typed `single_line_range` or `multi_line_range`; and
+- the deprecated integer `range` and `enclosing_range` fields consumed by
+  older tooling.
+
+This output passes the SCIP 0.10 linter and has been exercised through the
+SCIP 0.8.1-based conversion path in `scip-cli` 2.7.0. The acceptance gate uses
+a fresh conversion database and checks non-zero chunks and mentions plus
+search, members, references, and dependency queries. Supporting consumers
+older than that tested path is not currently a goal.
+
+Ranges use UTF-8 byte offsets and Ruff's universal-newline line index. Tests
+cover LF, CRLF, lone CR, and multibyte text.
+
+## Feature matrix
+
+This table describes implemented behavior, not the broader public-readiness
+plan.
+
+| Area | `ty-scip` now | `scip-python` comparison |
+| --- | --- | --- |
+| Project files | ty-selected first-party `.py` and `.pyi` files | Supported through Pyright's project model |
+| Global definitions | Modules, classes, functions, methods, constructors, variables, constants, properties, fields, and type parameters | Broadly supported |
+| Callable parameters | Stable global symbols beneath named callables | Supported, including Pyright's deeper callable model |
+| Local definitions | Deterministic semantic bindings, including unused and repeated definitions | Broadly supported, including nested constructs |
+| First-party references | Unambiguous names, attributes, imports, re-exports, and keyword arguments | Broadly supported |
+| Overloads and repeated definitions | Co-definitions normalize when they resolve to one durable symbol | Supported through Pyright declaration identity |
+| Instance attributes | Promoted only when ty proves a receiver attribute in a direct undecorated method belongs to the class; inherited reads resolve | Broader handling through Pyright's class/member model |
+| Imports and aliases | Unambiguous first-party targets; dynamic/wildcard edge cases are not yet claimed | More mature import, alias, and re-export handling |
+| Package identity | One first-party PEP 621 or explicit name/version for the whole index | First-party, standard-library, and installed-distribution identities |
+| External links | Counted and omitted | Standard-library and third-party symbols can be emitted |
+| Occurrence roles | Definition, import, read, write, and augmented read/write | Definition and read |
+| Symbol information | Kind and display name; definitions carry enclosing ranges | Also emits richer documentation and signatures |
+| Inheritance and overrides | Inherited reads can resolve, but no SCIP relationships are emitted | Emits class/implementation relationships |
+| Symbol scheme | `ty-scip`; intentionally not symbol-compatible | `scip-python` scheme |
+| SCIP ranges | SCIP 0.10 typed plus legacy fields | Legacy-consumer compatible |
+| Diagnostics and notebooks | Not emitted | Not emitted; not a parity blocker |
+
+`ty-scip` preallocates user-visible semantic definitions before reference
+resolution. This includes locals, imports, parameters, comprehensions,
+patterns, exception targets, walrus bindings, type parameters, and nested
+definitions when ty exposes a uniquely representable binding. Shared source
+ranges that map to several distinct bindings are not assigned an arbitrary
+symbol.
+
+## Identity and omission rules
+
+Global first-party symbols use the `ty-scip` scheme, Python as the package
+manager, one project package identity, importable module components, lexical
+containers, and the SCIP descriptor kind. `src/` is a filesystem layout, not a
+symbol descriptor.
+
+Package identity precedence is:
+
+1. `--project-name` and `--project-version`;
+2. static PEP 621 `[project].name` and `[project].version`; then
+3. an empty value.
+
+Dynamic versions are not executed or imported. Multi-distribution monorepos,
+editable-install ownership, standard-library version identity, and installed
+distribution ownership are not implemented.
+
+Function-local symbols are allocated deterministically in source order. When
+several declarations represent one semantic binding, their local symbol uses
+one deterministic display name. A repeated run is byte-identical only when
+the checkout and complete arguments are identical: SCIP metadata records the
+arguments, including the output path.
+
+Resolution outcomes mean:
+
+- **unresolved**: ty returned no declaration target for the queried syntax;
+- **ambiguous**: distinct first-party or mixed targets remained after safe
+  binding and overload normalization;
+- **external**: every target was outside the indexed first-party file set; and
+- **skipped**: a target existed but could not be serialized safely, such as a
+  document-local symbol referenced from another file.
+
+These are occurrence-query counters, not diagnostics and not a claim that all
+Python syntax has been enumerated. They include legitimate external names and
+syntax that is not a semantic reference, so lower totals are not automatically
+better.
+
+Known conservative omissions include:
+
+- standard-library and third-party links;
+- receiver attributes in decorated methods, where a simple `self`/`cls`
+  assumption could misclassify static methods or transformed callables;
+- genuinely dynamic attributes and imports;
+- string references such as string annotations, pytest fixture names, and
+  `__slots__` entries;
+- inherited/override relationships, implementations, and type-definition
+  relationships;
+- documentation, signatures, diagnostics, and call hierarchy; and
+- exact `scip-python` symbol compatibility.
+
+## Evaluated ty/Ruff API surface
+
+The current adapter already uses ty project discovery, Ruff parsing and line
+indexes, ty document symbols, declaration navigation, semantic scopes,
+definition/place tables, and proven instance-member places.
+
+The following public APIs at the pinned revision were evaluated rather than
+blindly reimplemented:
+
+| API or evidence | Useful capability | Current decision |
+| --- | --- | --- |
+| `semantic_tokens` | Precise token ranges and modifiers, including some string annotations | Deferred: it does not provide durable targets or read/write roles by itself |
+| `find_references` and document highlights | Reference and local read/write evidence | Keep as fixture/oracle tools; Ruff syntax contexts provide production roles without reverse workspace scans |
+| `type_hierarchy_supertypes` | Direct base-class information | Deferred until SCIP relationship emission has focused fixtures |
+| `goto_implementation` | Implementation targets | Deferred with inheritance/override relationships |
+| `goto_type_definition` | Type targets for expressions | Deferred until the intended SCIP representation is proven |
+| `hover` | Rendered signatures and documentation | Deferred: extracting stable structured symbol information from display text would be brittle |
+| method decorators and semantic place tables | Distinguish and prove class-owned members | Place evidence is used; decorated methods remain gated until receiver behavior is proven |
+| module/dependency ownership | Basis for external package identities | Deferred until distribution and standard-library identities are trustworthy |
+
+The most valuable upstream addition would be a stable bulk resolved-occurrence
+API carrying exact ranges, roles, canonical targets, aliases, ownership,
+signatures, and documentation. Until then, `ty-scip` keeps ty/Ruff coupling in
+one module and avoids copying analyzer logic or maintaining a fork.
+
+## Platform and release limits
+
+The current source build is the distribution mechanism. The Cargo package is
+marked `publish = false`, the ty/Ruff dependencies are pinned Git crates, and
+there are no release binaries. macOS is exercised locally; Windows behavior
+is not claimed until file-URI and replacement-rename behavior are tested in
+CI. A project license, third-party notices, and CI are required before calling
+the repository release-ready.
+
+The pinned crates have no external API-stability guarantee. Pin updates are
+deliberate compatibility work, not routine dependency bumps.
+
+## Validation and pin updates
+
+For ordinary changes:
+
+1. Run `cargo fmt --all --check`.
+2. Run `cargo clippy --locked --all-targets -- -D warnings`.
+3. Run `cargo test --locked` and `cargo build --release --locked`.
+4. Generate the same fixture twice with identical arguments and compare the
+   bytes.
+5. Lint with SCIP 0.10 and perform an isolated `scip-cli` 2.7.0 conversion and
+   query gate when emission changes.
+
+For a Ruff pin update:
+
+1. Change every direct Ruff/ty dependency to the same full commit in
+   `Cargo.toml`; mixed revisions are unsupported.
+2. Regenerate and commit `Cargo.lock`.
+3. Resolve public API changes without copying private analyzer logic.
+4. Run the ordinary gate above, including decoded-SCIP positive and false-link
+   fixtures.
+5. Re-run the frozen OpenGHG scale check and record time, index size,
+   definition/reference/omission counters, deterministic bytes, lint, and the
+   isolated search/members/references/dependencies results.
+6. Compare the semantic edges with `scip-python`; do not require identical
+   scheme-specific symbol strings.
