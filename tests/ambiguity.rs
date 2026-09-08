@@ -1,5 +1,8 @@
 use std::{fs, path::PathBuf, process::Command};
 
+#[allow(dead_code)]
+mod support;
+
 #[test]
 fn keeps_distinct_semantic_places_ambiguous() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/ambiguity");
@@ -25,11 +28,15 @@ fn keeps_distinct_semantic_places_ambiguous() {
         }),
         "missing distinct-place sample\n{stderr}"
     );
+    assert!(output.stdout.is_empty());
+    let decoded = support::read_index(&index);
+    let document = support::document(&decoded, "main.py");
     assert!(
-        !String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .any(|line| line.starts_with("main.py:123..129 -> ")),
-        "an ambiguous call must not gain a guessed edge"
+        document
+            .occurrences
+            .iter()
+            .all(|occurrence| occurrence.range != [10, 11, 17]),
+        "an ambiguous call must not gain a guessed occurrence"
     );
     fs::remove_file(index).expect("remove test index");
 }
@@ -51,12 +58,15 @@ fn keeps_distinct_global_symbol_kinds_ambiguous() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.stdout.is_empty());
+    let decoded = support::read_index(&index);
+    let document = support::document(&decoded, "main.py");
     assert!(
-        !stdout
-            .lines()
-            .any(|line| line.starts_with("main.py:82..87 -> ")),
-        "a class/function choice must not gain a guessed edge\n{stdout}"
+        document
+            .occurrences
+            .iter()
+            .all(|occurrence| occurrence.range != [8, 0, 5]),
+        "a class/function choice must not gain a guessed occurrence"
     );
     assert!(
         String::from_utf8_lossy(&output.stderr)

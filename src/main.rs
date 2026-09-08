@@ -1,9 +1,42 @@
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, process};
 
 mod scip_emit;
 mod ty_index;
 
-fn main() -> Result<(), String> {
+const USAGE: &str = "Usage: ty-scip [PROJECT_ROOT] [OUTPUT.scip]\n\nIndexes a Python project into index.scip by default.";
+
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("ty-scip: {error}");
+        process::exit(1);
+    }
+}
+
+fn run() -> Result<(), String> {
+    let caller_directory = env::current_dir()
+        .map_err(|error| format!("cannot determine the current directory: {error}"))?;
+    let arguments = env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments.len() == 1 && matches!(arguments[0].to_str(), Some("-h" | "--help")) {
+        println!("{USAGE}");
+        return Ok(());
+    }
+    if arguments.len() == 1 && matches!(arguments[0].to_str(), Some("-V" | "--version")) {
+        println!("ty-scip {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if let Some(option) = arguments
+        .iter()
+        .find(|argument| argument.to_string_lossy().starts_with('-'))
+    {
+        return Err(format!(
+            "unknown option {}; try `ty-scip --help`",
+            option.to_string_lossy()
+        ));
+    }
+    if arguments.len() > 2 {
+        return Err(format!("expected at most two arguments\n{USAGE}"));
+    }
+
     let sample_limit = match env::var("TY_SCIP_SAMPLE_LIMIT") {
         Ok(value) => value
             .parse::<usize>()
@@ -11,16 +44,19 @@ fn main() -> Result<(), String> {
         Err(env::VarError::NotPresent) => 0,
         Err(error) => return Err(format!("invalid TY_SCIP_SAMPLE_LIMIT: {error}")),
     };
-    let mut arguments = env::args_os().skip(1);
-    let root = arguments
-        .next()
-        .map_or_else(env::current_dir, |path| PathBuf::from(path).canonicalize());
-    let output = arguments.next().map(PathBuf::from);
-    if arguments.next().is_some() {
-        return Err("usage: ty-scip [PROJECT_ROOT] [OUTPUT.scip]".into());
-    }
+    let root = arguments.first().map_or_else(
+        || Ok(caller_directory.clone()),
+        |path| {
+            let path = PathBuf::from(path);
+            path.canonicalize()
+                .map_err(|error| format!("cannot resolve project root {}: {error}", path.display()))
+        },
+    )?;
+    let output = arguments
+        .get(1)
+        .map_or_else(|| caller_directory.join("index.scip"), PathBuf::from);
 
-    let index = ty_index::index(root.map_err(|error| error.to_string())?, sample_limit)?;
+    let index = ty_index::index(root, sample_limit)?;
     for sample in &index.samples {
         eprintln!("{sample}");
     }
@@ -32,7 +68,6 @@ fn main() -> Result<(), String> {
         if edge.source_file == edge.target_file && edge.source_range == edge.target_range {
             continue;
         }
-        let source = &index.files[edge.source_file];
         let target = &index.files[edge.target_file];
         let Some(symbol) = target
             .globals
@@ -47,16 +82,13 @@ fn main() -> Result<(), String> {
             continue;
         }
         references += 1;
-        println!(
-            "{}:{:?} -> {}:{:?}",
-            source.relative_path, edge.source_range, target.relative_path, edge.target_range,
-        );
     }
     let definitions = index
         .files
         .iter()
         .map(|file| file.globals.len() + file.locals.len())
         .sum::<usize>();
+    scip_emit::write_index(&index.root, &output, &index.files, &index.edges)?;
     eprintln!(
         "indexed {} files: {definitions} definitions, {references} references; \
          {} unresolved, {} ambiguous, {} external, {} skipped \
@@ -68,8 +100,5 @@ fn main() -> Result<(), String> {
         skipped_cross_file_locals + skipped_missing_symbols,
     );
 
-    if let Some(output) = output {
-        scip_emit::write_index(&index.root, &output, &index.files, &index.edges)?;
-    }
     Ok(())
 }

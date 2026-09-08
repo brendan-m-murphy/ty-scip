@@ -1,5 +1,9 @@
 use std::{fs, path::PathBuf, process::Command};
 
+use scip::types::SymbolRole;
+
+mod support;
+
 #[test]
 fn resolves_the_four_spike_cases() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/smoke/src");
@@ -20,24 +24,35 @@ fn resolves_the_four_spike_cases() {
         "indexed 3 files: 16 definitions, 12 references; 0 unresolved, 0 ambiguous, \
          6 external, 0 skipped (0 cross-file local, 0 missing symbol)"
     );
-    let stdout = String::from_utf8(output.stdout).expect("UTF-8 output");
-
-    for (source, target) in [
-        ("main.py:124..133 -> ", "library.py:64..73"),
-        ("main.py:157..163 -> ", "library.py:83..89"),
-        ("main.py:164..168 -> ", "library.py:4..10"),
-        ("main.py:169..176 -> ", "main.py:90..97"),
-    ] {
-        assert!(
-            stdout
-                .lines()
-                .any(|line| line.contains(source) && line.ends_with(target)),
-            "missing {source:?} ... {target:?}\n{stdout}"
-        );
-    }
+    assert!(output.stdout.is_empty());
 
     let first = fs::read(&index).expect("read index");
     assert!(!first.is_empty());
+    let decoded = support::read_index(&index);
+    let main = support::document(&decoded, "src/main.py");
+    let library = support::document(&decoded, "src/library.py");
+    for (read, definition) in [
+        (
+            support::occurrence(main, &[8, 11, 20]),
+            support::occurrence(main, &[7, 4, 13]),
+        ),
+        (
+            support::occurrence(main, &[8, 21, 27]),
+            support::occurrence(library, &[5, 8, 14]),
+        ),
+        (
+            support::occurrence(main, &[8, 28, 32]),
+            support::occurrence(library, &[0, 4, 10]),
+        ),
+        (
+            support::occurrence(main, &[8, 33, 40]),
+            support::occurrence(main, &[6, 4, 11]),
+        ),
+    ] {
+        assert_eq!(read.symbol, definition.symbol);
+        assert_eq!(read.symbol_roles, SymbolRole::ReadAccess as i32);
+        assert_eq!(definition.symbol_roles, SymbolRole::Definition as i32);
+    }
     assert!(
         first
             .windows(b"ty-scip python . . library/".len())

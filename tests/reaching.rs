@@ -24,19 +24,7 @@ fn groups_reaching_definitions_by_semantic_place() {
         "indexed 1 files: 6 definitions, 3 references; 0 unresolved, 0 ambiguous, \
          0 external, 0 skipped (0 cross-file local, 0 missing symbol)"
     );
-    let stdout = String::from_utf8(output.stdout).expect("UTF-8 output");
-    assert!(
-        stdout
-            .lines()
-            .any(|line| line == "main.py:115..121 -> main.py:39..45"),
-        "the use must resolve to the grouped local binding\n{stdout}"
-    );
-    for definition in ["main.py:39..45 -> ", "main.py:74..80 -> "] {
-        assert!(
-            !stdout.lines().any(|line| line.starts_with(definition)),
-            "a definition site must not gain a read edge\n{stdout}"
-        );
-    }
+    assert!(output.stdout.is_empty());
 
     let decoded = support::read_index(&index);
     let document = support::document(&decoded, "main.py");

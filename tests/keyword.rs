@@ -26,29 +26,9 @@ fn resolves_cross_module_keyword_arguments_to_parameters() {
     assert_eq!(
         String::from_utf8_lossy(&output.stderr).trim(),
         "indexed 2 files: 26 definitions, 19 references; 1 unresolved, 0 ambiguous, \
-         10 external, 1 skipped (1 cross-file local, 0 missing symbol)"
+         10 external, 0 skipped (0 cross-file local, 0 missing symbol)"
     );
-    let stdout = String::from_utf8(output.stdout).expect("UTF-8 output");
-    assert!(
-        stdout
-            .lines()
-            .any(|line| line == "caller.py:54..60 -> library.py:46..52"),
-        "missing cross-file keyword-to-parameter edge\n{stdout}"
-    );
-    assert!(
-        stdout
-            .lines()
-            .any(|line| line == "caller.py:84..90 -> library.py:160..166"),
-        "missing overloaded keyword-to-parameter edge\n{stdout}"
-    );
-    for definition in ["160..166", "220..226", "265..271"] {
-        assert!(
-            !stdout
-                .lines()
-                .any(|line| line.starts_with(&format!("library.py:{definition} ->"))),
-            "overload definition was also emitted as a read\n{stdout}"
-        );
-    }
+    assert!(output.stdout.is_empty());
 
     let first = fs::read(&index).expect("read index");
     assert!(!first.is_empty());
@@ -61,6 +41,14 @@ fn resolves_cross_module_keyword_arguments_to_parameters() {
             .iter()
             .any(|symbol| symbol.symbol.contains("library/time_offset().(value)")),
         "lambda parameter must not inherit its enclosing function's global identity"
+    );
+    let period_call = support::occurrence(caller, &[2, 12, 18]);
+    let period_definition = support::occurrence(library, &[3, 16, 22]);
+    assert_eq!(period_call.symbol, period_definition.symbol);
+    assert_eq!(period_call.symbol_roles, SymbolRole::ReadAccess as i32);
+    assert_eq!(
+        period_definition.symbol_roles,
+        SymbolRole::Definition as i32
     );
     let call = support::occurrence(caller, &[3, 17, 23]);
     let overloads =
