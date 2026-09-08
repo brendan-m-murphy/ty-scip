@@ -25,7 +25,7 @@ fn resolves_cross_module_keyword_arguments_to_parameters() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stderr).trim(),
-        "indexed 2 files: 22 definitions, 19 references; 1 unresolved, 0 ambiguous, \
+        "indexed 2 files: 26 definitions, 19 references; 1 unresolved, 0 ambiguous, \
          10 external, 1 skipped (1 cross-file local, 0 missing symbol)"
     );
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 output");

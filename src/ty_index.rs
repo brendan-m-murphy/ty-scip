@@ -46,33 +46,6 @@ impl<'ast> SourceOrderVisitor<'ast> for IdentifierRanges {
     }
 }
 
-struct DefinitionBindings<'db, 'output> {
-    db: &'db dyn ty_python_core::Db,
-    program_file: ProgramFile<'db>,
-    groups: HashMap<(ScopeId<'db>, ScopedPlaceId), usize>,
-    ranges: &'output mut HashMap<TextRange, Vec<usize>>,
-}
-
-impl<'ast> SourceOrderVisitor<'ast> for DefinitionBindings<'_, '_> {
-    fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
-        if let Some(definitions) = semantic_index(self.db, self.program_file).try_definitions(node)
-        {
-            for definition in definitions {
-                let module = parsed_module(self.db, definition.python_file(self.db)).load(self.db);
-                let range = definition.focus_range(self.db, &module).range();
-                let key = (definition.scope(self.db), definition.place(self.db));
-                let next = self.groups.len();
-                let group = *self.groups.entry(key).or_insert(next);
-                let groups = self.ranges.entry(range).or_default();
-                if !groups.contains(&group) {
-                    groups.push(group);
-                }
-            }
-        }
-        TraversalSignal::Traverse
-    }
-}
-
 struct ParameterSymbols<'symbols> {
     callables: Vec<Option<SymbolData>>,
     globals: &'symbols mut HashMap<TextRange, SymbolData>,
@@ -171,22 +144,13 @@ pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<Inde
             }
             .visit_body(module.suite());
         }
-        let mut semantic_bindings = HashMap::new();
-        {
-            let module = parsed_module(&db, program_file.python_file(&db)).load(&db);
-            DefinitionBindings {
-                db: &db,
-                program_file,
-                groups: HashMap::new(),
-                ranges: &mut semantic_bindings,
-            }
-            .visit_body(module.suite());
-        }
+        let (locals, semantic_bindings) =
+            allocate_semantic_symbols(&db, program_file, &source, &mut globals);
         data.push(FileData {
             relative_path,
             source,
             globals,
-            locals: HashMap::new(),
+            locals,
             semantic_bindings,
         });
     }
@@ -357,8 +321,6 @@ pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<Inde
     });
     edges.dedup();
 
-    allocate_local_symbols(&mut data, &edges);
-
     Ok(IndexData {
         root,
         files: data,
@@ -370,63 +332,85 @@ pub(crate) fn index(discovery_root: PathBuf, sample_limit: usize) -> Result<Inde
     })
 }
 
-fn allocate_local_symbols(data: &mut [FileData], edges: &[Edge]) {
-    for (target_file, file_data) in data.iter_mut().enumerate() {
-        let mut ranges = edges
-            .iter()
-            .filter(|edge| {
-                edge.target_file == target_file
-                    && edge.source_file == target_file
-                    && !file_data.globals.contains_key(&edge.target_range)
-            })
-            .map(|edge| edge.target_range)
-            .collect::<Vec<_>>();
-        ranges.sort_unstable_by_key(|range| (range.start(), range.end()));
-        ranges.dedup();
-        let mut allocated_groups = Vec::new();
-        for range in ranges {
-            let group = file_data
-                .semantic_bindings
-                .get(&range)
-                .filter(|groups| groups.len() == 1)
-                .map(|groups| groups[0]);
-            if group.is_some_and(|group| allocated_groups.contains(&group)) {
-                continue;
-            }
-            if let Some(group) = group {
-                allocated_groups.push(group);
-            }
-            let mut definition_ranges = group.map_or_else(
-                || vec![range],
-                |group| {
-                    file_data
-                        .semantic_bindings
-                        .iter()
-                        .filter_map(|(range, groups)| {
-                            (groups.len() == 1 && groups[0] == group).then_some(*range)
-                        })
-                        .collect()
-                },
-            );
-            definition_ranges.sort_unstable_by_key(|range| (range.start(), range.end()));
-            let display_name = definition_ranges
-                .iter()
-                .map(|range| source_slice(&file_data.source, *range))
-                .min_by_key(|name| (name.len(), *name))
-                .expect("local definition group is not empty")
-                .to_owned();
-            let symbol = local_symbol(file_data.locals.len(), display_name, range);
-            for definition_range in definition_ranges {
-                file_data.locals.insert(
-                    definition_range,
-                    SymbolData {
-                        full_range: definition_range,
-                        ..symbol.clone()
-                    },
-                );
+fn allocate_semantic_symbols<'db>(
+    db: &'db dyn ty_python_core::Db,
+    program_file: ProgramFile<'db>,
+    source: &str,
+    globals: &mut HashMap<TextRange, SymbolData>,
+) -> (
+    HashMap<TextRange, SymbolData>,
+    HashMap<TextRange, Vec<usize>>,
+) {
+    let index = semantic_index(db, program_file);
+    let module = parsed_module(db, program_file.python_file(db)).load(db);
+    let mut definitions = Vec::new();
+    for scope in index.scope_ids() {
+        for (_, definition, _) in index
+            .use_def_map(scope.file_scope_id(db))
+            .definitions_with_usage()
+        {
+            if definition.kind(db).is_user_visible() {
+                definitions.push((
+                    (definition.scope(db), definition.place(db)),
+                    definition.focus_range(db, &module).range(),
+                ));
             }
         }
     }
+    definitions.sort_by_key(|(_, range)| (range.start(), range.end()));
+
+    let mut group_ids = HashMap::<(ScopeId<'db>, ScopedPlaceId), usize>::new();
+    let mut groups = Vec::<Vec<TextRange>>::new();
+    let mut semantic_bindings = HashMap::<TextRange, Vec<usize>>::new();
+    for (key, range) in definitions {
+        let group = *group_ids.entry(key).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        if !groups[group].contains(&range) {
+            groups[group].push(range);
+        }
+        let bindings = semantic_bindings.entry(range).or_default();
+        if !bindings.contains(&group) {
+            bindings.push(group);
+        }
+    }
+
+    let mut locals = HashMap::new();
+    let mut next_local = 0;
+    for ranges in groups {
+        let ranges = ranges
+            .into_iter()
+            .filter(|range| semantic_bindings[range].len() == 1)
+            .collect::<Vec<_>>();
+        if ranges.is_empty() {
+            continue;
+        }
+        let existing = ranges.iter().find_map(|range| globals.get(range)).cloned();
+        let symbol = existing.unwrap_or_else(|| {
+            let display_name = ranges
+                .iter()
+                .map(|range| source_slice(source, *range))
+                .min_by_key(|name| (name.len(), *name))
+                .expect("semantic definition group is not empty")
+                .to_owned();
+            let symbol = local_symbol(next_local, display_name, ranges[0]);
+            next_local += 1;
+            symbol
+        });
+        for range in ranges {
+            let symbol = SymbolData {
+                full_range: range,
+                ..symbol.clone()
+            };
+            if symbol.is_local() {
+                locals.insert(range, symbol);
+            } else {
+                globals.entry(range).or_insert(symbol);
+            }
+        }
+    }
+    (locals, semantic_bindings)
 }
 
 fn collect_global_symbols(

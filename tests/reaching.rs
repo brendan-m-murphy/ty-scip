@@ -21,14 +21,14 @@ fn groups_reaching_definitions_by_semantic_place() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stderr).trim(),
-        "indexed 1 files: 5 definitions, 3 references; 0 unresolved, 0 ambiguous, \
+        "indexed 1 files: 6 definitions, 3 references; 0 unresolved, 0 ambiguous, \
          0 external, 0 skipped (0 cross-file local, 0 missing symbol)"
     );
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 output");
     assert!(
         stdout
             .lines()
-            .any(|line| line == "main.py:97..103 -> main.py:39..45"),
+            .any(|line| line == "main.py:115..121 -> main.py:39..45"),
         "the use must resolve to the grouped local binding\n{stdout}"
     );
     for definition in ["main.py:39..45 -> ", "main.py:74..80 -> "] {
@@ -42,12 +42,16 @@ fn groups_reaching_definitions_by_semantic_place() {
     let document = support::document(&decoded, "main.py");
     let first = support::occurrence(document, &[2, 8, 14]);
     let second = support::occurrence(document, &[4, 8, 14]);
-    let read = support::occurrence(document, &[5, 11, 17]);
+    let unused = support::occurrence(document, &[5, 4, 10]);
+    let read = support::occurrence(document, &[6, 11, 17]);
     assert_eq!(first.symbol, second.symbol);
     assert_eq!(first.symbol, read.symbol);
     assert!(first.symbol.starts_with("local "));
     assert_eq!(first.symbol_roles, SymbolRole::Definition as i32);
     assert_eq!(second.symbol_roles, SymbolRole::Definition as i32);
+    assert!(unused.symbol.starts_with("local "));
+    assert_ne!(unused.symbol, first.symbol);
+    assert_eq!(unused.symbol_roles, SymbolRole::Definition as i32);
     assert_eq!(read.symbol_roles, SymbolRole::ReadAccess as i32);
     fs::remove_file(index).expect("remove test index");
 }

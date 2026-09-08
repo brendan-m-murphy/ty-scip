@@ -67,12 +67,14 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ### 2. SCIP fidelity
 
-1. Emit trustworthy occurrence roles from syntax context.
-2. Add documentation and signatures to `SymbolInformation` where stable.
-3. Emit SCIP relationships supported by the semantic evidence.
-4. Preserve SCIP 0.8 consumer compatibility alongside SCIP 0.10 typed ranges
+1. Use Ruff's UTF-8 line index as the single source for legacy and typed SCIP
+   ranges, including CRLF, lone-CR, Unicode, and enclosing-range tests.
+2. Emit trustworthy occurrence roles from syntax context.
+3. Add documentation and signatures to `SymbolInformation` where stable.
+4. Emit SCIP relationships supported by the semantic evidence.
+5. Preserve SCIP 0.8 consumer compatibility alongside SCIP 0.10 typed ranges
    until the benchmark consumer no longer requires it.
-5. Add package/distribution identity before emitting external links; never
+6. Add package/distribution identity before emitting external links; never
    pretend stdlib or site-packages belong to the indexed project.
 
 ### 3. Tests and evaluation
@@ -111,11 +113,12 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Implement class-owned instance-member symbols as the next evidenced navigation
-gap, then add project identity and the minimum public CLI/release surface. The
-remaining 39 first-party ambiguities stay unresolved until typed occurrence
-resolution can remove constructor/`__call__` expansion without a first-target
-heuristic.
+Preallocate every user-visible semantic definition in deterministic source
+order, then promote proven class-owned instance-member groups. Add project
+identity and the minimum public CLI/release surface after those symbol-identity
+gaps. The remaining 39 first-party ambiguities stay unresolved until typed
+occurrence resolution can remove constructor/`__call__` expansion without a
+first-target heuristic.
 
 ## Progress log
 
@@ -154,3 +157,19 @@ heuristic.
   Four fresh release-mode OpenGHG runs using identical arguments produced the
   same SHA-256 (`d2fa1291dc941f6cc0c91ff972ec0d260a1e4c75769b15f61b872035bfa1169b`)
   with unchanged occurrence and omission counts.
+- **2026-09-08:** Split the implementation into a CLI/reporting entry point, a
+  ty/Ruff indexing module, and a DB-free SCIP emission module. This introduced
+  no framework or trait boundary. The post-split release build reproduced the
+  exact pre-split OpenGHG SHA-256 and counters.
+- **2026-09-08:** Moved complete semantic-definition allocation ahead of
+  instance-member promotion. Public `scope_ids`, `use_def_map`, and
+  `definitions_with_usage` can enumerate unused locals, imports,
+  comprehensions, patterns, exception targets, parameters, walruses, type
+  parameters, and nested definitions. Promoting member groups on top of this
+  inventory avoids two allocation implementations and stabilizes local numbers
+  before reference coverage changes.
+- **2026-09-08:** Replaced the hand-written newline scanner with Ruff's pinned
+  UTF-8 `LineIndex`. One index is reused per document for legacy and SCIP 0.10
+  typed occurrence/enclosing ranges. Focused tests cover LF, CRLF, lone CR, and
+  multibyte UTF-8 columns; this fixes lone-CR coordinates without changing the
+  consumer compatibility policy.

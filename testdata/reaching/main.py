@@ -3,6 +3,7 @@ def select(flag):
         result = "yes"
     else:
         result = "no"
+    unused = None
     return result
 
 
