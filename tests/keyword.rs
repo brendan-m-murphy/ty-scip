@@ -60,11 +60,22 @@ fn resolves_cross_module_keyword_arguments_to_parameters() {
             .any(|window| window == b"library/process().(format)"),
         "overload parameters must share one durable symbol"
     );
-    let second = run();
+    let second = Command::new(env!("CARGO_BIN_EXE_ty-scip"))
+        .arg(&root)
+        .arg(&index)
+        .env("TY_SCIP_SAMPLE_LIMIT", "1")
+        .output()
+        .expect("rerun ty-scip with diagnostic samples");
     assert!(
         second.status.success(),
         "{}",
         String::from_utf8_lossy(&second.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&second.stderr)
+            .lines()
+            .any(|line| line == "unresolved caller.py:147..154 \"unknown\""),
+        "missing deterministic unresolved sample"
     );
     assert_eq!(first, fs::read(&index).expect("reread index"));
     fs::remove_file(index).expect("remove test index");

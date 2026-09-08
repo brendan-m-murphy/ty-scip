@@ -117,6 +117,13 @@ struct Edge {
 }
 
 fn main() -> Result<(), String> {
+    let sample_limit = match env::var("TY_SCIP_SAMPLE_LIMIT") {
+        Ok(value) => value
+            .parse::<usize>()
+            .map_err(|_| "TY_SCIP_SAMPLE_LIMIT must be a non-negative integer")?,
+        Err(env::VarError::NotPresent) => 0,
+        Err(error) => return Err(format!("invalid TY_SCIP_SAMPLE_LIMIT: {error}")),
+    };
     let mut arguments = env::args_os().skip(1);
     let root = arguments
         .next()
@@ -203,6 +210,8 @@ fn main() -> Result<(), String> {
     let mut unresolved = 0;
     let mut ambiguous = 0;
     let mut external = 0;
+    let mut unresolved_samples = 0;
+    let mut ambiguous_samples = 0;
     for (source_index, file_data) in data.iter().enumerate() {
         let program_file = db.program_file(file_data.file);
         let ranges = {
@@ -213,13 +222,9 @@ fn main() -> Result<(), String> {
         };
 
         for range in ranges {
-            let Some(result) = ty_ide::goto_declaration(&db, program_file, range.start()) else {
-                unresolved += 1;
-                continue;
-            };
-            let mut targets = result
-                .value
+            let mut targets = ty_ide::goto_declaration(&db, program_file, range.start())
                 .into_iter()
+                .flat_map(|result| result.value)
                 .map(|target| (target.file(), target.focus_range()))
                 .collect::<Vec<_>>();
             targets.sort_unstable_by_key(|(file, range)| {
@@ -255,9 +260,26 @@ fn main() -> Result<(), String> {
                     }
                     continue;
                 }
+                if targets
+                    .iter()
+                    .all(|(file, _)| !file_indices.contains_key(file))
+                {
+                    external += 1;
+                    continue;
+                }
             }
             match targets.as_slice() {
-                [] => unresolved += 1,
+                [] => {
+                    unresolved += 1;
+                    if unresolved_samples < sample_limit {
+                        eprintln!(
+                            "unresolved {}:{range:?} {:?}",
+                            file_data.relative_path,
+                            source_slice(&file_data.source, range)
+                        );
+                        unresolved_samples += 1;
+                    }
+                }
                 [(target_file, target_range)] => {
                     if let Some(target_file) = file_indices.get(target_file) {
                         edges.push(Edge {
@@ -270,7 +292,32 @@ fn main() -> Result<(), String> {
                         external += 1;
                     }
                 }
-                _ => ambiguous += 1,
+                _ => {
+                    ambiguous += 1;
+                    if ambiguous_samples < sample_limit {
+                        let candidates = targets
+                            .iter()
+                            .map(|(file, range)| {
+                                if let Some(index) = file_indices.get(file) {
+                                    let symbol = data[*index]
+                                        .globals
+                                        .get(range)
+                                        .map_or("?", |symbol| symbol.symbol.as_str());
+                                    format!("{}:{range:?}={symbol}", data[*index].relative_path)
+                                } else {
+                                    format!("{}:{range:?}=external", file.path(&db))
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        eprintln!(
+                            "ambiguous {}:{range:?} {:?} -> {candidates}",
+                            file_data.relative_path,
+                            source_slice(&file_data.source, range)
+                        );
+                        ambiguous_samples += 1;
+                    }
+                }
             }
         }
     }

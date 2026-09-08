@@ -17,11 +17,11 @@ drop-in symbol compatibility only after the core approach works.
 
 - Planning and source/API reconnaissance are complete.
 - The workspace started as an empty Git repository.
-- Phases 0 and 1 are complete. Phase 2 now has measurable resolution outcomes.
-  Its next stage is to retain ty's semantic definition identities long enough
-  to collapse co-definitions that share one durable SCIP symbol, then sample
-  and classify what remains unresolved or genuinely ambiguous. Richer
-  occurrence roles remain deferred.
+- Phases 0 and 1 are complete. Phase 2 now has measurable resolution outcomes,
+  durable-symbol normalization, and opt-in deterministic residual samples.
+  Its next stage is to classify first-party co-definitions for which navigation
+  ranges do not yet map to a durable SCIP symbol. Richer occurrence roles
+  remain deferred.
 - Rust 1.98.1 was installed after the initial environment check. The Codex app
   shell has not refreshed its `PATH`, so commands currently use
   `/Users/bm13805/.cargo/bin/cargo` explicitly.
@@ -40,10 +40,13 @@ drop-in symbol compatibility only after the core approach works.
   definitions, resolved references, unresolved and ambiguous candidates,
   external targets, and safely skipped internal targets.
 - A fresh same-root comparison on frozen OpenGHG reports 14,634 definitions,
-  35,924 resolved references, 9,754 unresolved identifier queries, 9,594
-  ambiguous queries, 10,488 external targets, and 309 skipped internal edges.
+  35,924 resolved references, 9,754 unresolved identifier queries, 7,870
+  ambiguous queries, 12,212 external queries, and 309 skipped internal edges.
   Against the previous release binary under the same environment, symbol-table
   normalization recovered 331 references and reduced ambiguity by 375 queries.
+  Classifying multi-target queries whose candidates are all outside the project
+  moved another 1,724 queries from ambiguous to external without changing the
+  emitted index.
   Earlier recorded counts used a different binary/environment and are retained
   in the progress log as historical evidence, not as this milestone's delta.
 
@@ -72,6 +75,13 @@ drop-in symbol compatibility only after the core approach works.
   Python or incomplete analyzer support account for others.
 - Resolution counters describe the AST identifiers queried through ty, not a
   claim that every possible Python semantic occurrence was enumerated.
+- Count a resolution with several candidates as external, once per source
+  query, when every candidate is outside the indexed project. Mixed
+  first-party/external results remain ambiguous, and external links remain
+  deferred until package ownership is trustworthy.
+- Keep residual sampling opt-in via `TY_SCIP_SAMPLE_LIMIT=<n>`. It prints the
+  first `n` post-normalization unresolved and ambiguous queries per category,
+  in deterministic traversal order, without changing SCIP output bytes.
 - Unsupported cross-file document-local targets are counted and skipped rather
   than aborting an otherwise useful repository index.
 - Keep ty/Ruff coupling in one module so a future supported Astral API can
@@ -370,6 +380,16 @@ be presented as a type-checker limitation.
   Both binaries were run as `ty-scip <frozen-root> <output.scip>` against
   `/private/tmp/openghg-codeintel-benchmark-20260908/source-ty-scip`, with
   stdout discarded.
+- **2026-09-08:** Added opt-in deterministic residual sampling through
+  `TY_SCIP_SAMPLE_LIMIT`. The first samples separated dynamic or injected
+  unresolved names, first-party reaching definitions without durable symbols,
+  and overloaded stdlib targets that had been mislabeled as project ambiguity.
+- **2026-09-08:** Multi-target resolutions are now counted once as external
+  when every candidate lies outside the indexed project. On frozen OpenGHG this
+  reclassified 1,724 queries: ambiguity fell from 9,594 to 7,870 and external
+  queries rose from 10,488 to 12,212. Definitions, references, and skipped
+  edges were unchanged. The smoke fixture's overloaded `str.upper` case now
+  reports external instead of ambiguous.
 
 ## Deliberate follow-ups
 
