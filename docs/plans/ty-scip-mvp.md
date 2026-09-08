@@ -1,7 +1,10 @@
 # ty-scip MVP plan
 
-Status: **in progress**  
+Status: **complete**
 Updated: 2026-09-08
+
+Superseded for ongoing work by
+[`ty-scip-public-readiness.md`](ty-scip-public-readiness.md).
 
 ## Goal
 
