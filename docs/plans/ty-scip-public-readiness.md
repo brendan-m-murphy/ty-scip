@@ -173,3 +173,18 @@ first-target heuristic.
   typed occurrence/enclosing ranges. Focused tests cover LF, CRLF, lone CR, and
   multibyte UTF-8 columns; this fixes lone-CR coordinates without changing the
   consumer compatibility policy.
+- **2026-09-08:** Preallocated all uniquely representable user-visible semantic
+  definitions before reference resolution. OpenGHG definitions increased from
+  16,688 to 22,975, while references and resolution counters were unchanged;
+  all three missing-symbol skips disappeared. Shared-range definitions such as
+  wildcard expansions remain in the semantic grouping table but are not
+  serialized as an arbitrary single local symbol.
+- **2026-09-08:** Promoted ty-proven receiver attributes in direct undecorated
+  methods to durable class-member symbols and canonicalized whole-expression
+  targets to the attribute token. On OpenGHG references increased from 40,738
+  to 41,235 and cross-file-local skips fell from 634 to 3, with unresolved and
+  ambiguous counts unchanged. Decorated methods remain conservatively omitted.
+- **2026-09-08:** Hardened the dependency-free CLI: help/version work, indexing
+  defaults to `index.scip`, normal stdout is quiet, and errors use an actionable
+  `ty-scip:` prefix. Tests now decode SCIP edges instead of treating debug edge
+  output as a contract.
