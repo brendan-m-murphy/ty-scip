@@ -6,13 +6,13 @@ use scip::{
     symbol::{format_symbol, parse_symbol},
     types::{
         Descriptor, Document, Index, Metadata, MultiLineRange, Occurrence, Package,
-        PositionEncoding, ProtocolVersion, SingleLineRange, Symbol, SymbolInformation, SymbolRole,
-        TextEncoding, ToolInfo, descriptor, symbol_information,
+        PositionEncoding, ProtocolVersion, Signature, SingleLineRange, Symbol, SymbolInformation,
+        SymbolRole, TextEncoding, ToolInfo, descriptor, symbol_information,
     },
     write_message_to_file,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum DefinitionKind {
     Module,
     Import,
@@ -56,6 +56,8 @@ pub(crate) struct SymbolData {
     pub(crate) display_name: String,
     pub(crate) kind: DefinitionKind,
     pub(crate) full_range: TextRange,
+    pub(crate) documentation: Vec<String>,
+    pub(crate) signature: Option<String>,
 }
 
 impl SymbolData {
@@ -105,6 +107,8 @@ pub(crate) fn global_symbol(
         display_name,
         kind,
         full_range,
+        documentation: Vec::new(),
+        signature: None,
     }
 }
 
@@ -124,6 +128,8 @@ pub(crate) fn parameter_symbol(
         display_name: name,
         kind: DefinitionKind::Parameter,
         full_range,
+        documentation: Vec::new(),
+        signature: None,
     }
 }
 
@@ -143,6 +149,8 @@ pub(crate) fn member_symbol(
         display_name: name,
         kind: DefinitionKind::Field,
         full_range,
+        documentation: Vec::new(),
+        signature: None,
     }
 }
 
@@ -173,6 +181,8 @@ pub(crate) fn local_symbol(
         display_name,
         kind: DefinitionKind::Variable,
         full_range,
+        documentation: Vec::new(),
+        signature: None,
     }
 }
 
@@ -324,20 +334,50 @@ fn symbol_information(
 ) -> Vec<SymbolInformation> {
     let mut symbols = globals.iter().chain(locals).collect::<Vec<_>>();
     symbols.sort_by(|(left_range, left), (right_range, right)| {
-        left.symbol.cmp(&right.symbol).then_with(|| {
-            (left_range.start(), left_range.end()).cmp(&(right_range.start(), right_range.end()))
-        })
+        left.symbol
+            .cmp(&right.symbol)
+            .then_with(|| {
+                (left_range.start(), left_range.end())
+                    .cmp(&(right_range.start(), right_range.end()))
+            })
+            .then_with(|| left.display_name.cmp(&right.display_name))
+            .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| left.documentation.cmp(&right.documentation))
+            .then_with(|| left.signature.cmp(&right.signature))
     });
-    symbols.dedup_by(|left, right| left.1.symbol == right.1.symbol);
-    symbols
-        .into_iter()
-        .map(|(_, symbol)| SymbolInformation {
+    let mut information: Vec<SymbolInformation> = Vec::new();
+    for (_, symbol) in symbols {
+        if let Some(previous) = information.last_mut()
+            && previous.symbol == symbol.symbol
+        {
+            if previous.documentation.is_empty() && !symbol.documentation.is_empty() {
+                previous.documentation.clone_from(&symbol.documentation);
+            }
+            if previous.signature_documentation.is_none()
+                && let Some(signature) = &symbol.signature
+            {
+                previous.signature_documentation = Some(python_signature(signature)).into();
+            }
+            continue;
+        }
+        information.push(SymbolInformation {
             symbol: symbol.symbol.clone(),
+            documentation: symbol.documentation.clone(),
             kind: symbol_kind(symbol.kind).into(),
             display_name: symbol.display_name.clone(),
+            signature_documentation: symbol.signature.as_deref().map(python_signature).into(),
             ..Default::default()
-        })
-        .collect()
+        });
+    }
+    information
+}
+
+fn python_signature(text: &str) -> Signature {
+    Signature {
+        language: "python".into(),
+        text: text.into(),
+        ..Default::default()
+    }
 }
 
 fn occurrence(
@@ -523,6 +563,11 @@ mod tests {
             display_name: display_name.into(),
             kind: DefinitionKind::Variable,
             full_range: TextRange::new(start.into(), (start + 1).into()),
+            documentation: (start == 20)
+                .then(|| "later documentation".into())
+                .into_iter()
+                .collect(),
+            signature: (start == 20).then(|| "def later()".into()),
         };
         let globals = HashMap::new();
         let locals = HashMap::from([
@@ -534,6 +579,15 @@ mod tests {
 
         assert_eq!(information.len(), 1);
         assert_eq!(information[0].display_name, "earlier");
+        assert_eq!(information[0].documentation, ["later documentation"]);
+        assert_eq!(
+            information[0]
+                .signature_documentation
+                .as_ref()
+                .unwrap()
+                .text,
+            "def later()"
+        );
     }
 
     #[test]

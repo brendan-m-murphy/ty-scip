@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fs, path::PathBuf};
 
 use ruff_db::{
-    parsed::parsed_module,
+    parsed::{ParsedModuleRef, parsed_module},
     source::source_text,
     system::{OsSystem, SystemPathBuf},
 };
@@ -14,7 +14,13 @@ use scip::types::SymbolRole;
 use ty_ide::{HierarchicalSymbols, SymbolId, SymbolInfo, SymbolKind};
 use ty_module_resolver::file_to_module;
 use ty_project::{Db as _, ProjectDatabase, ProjectMetadata, SemanticDb as _};
-use ty_python_core::{ProgramFile, place::ScopedPlaceId, scope::ScopeId, semantic_index};
+use ty_python_core::{
+    ProgramFile,
+    definition::{DefinitionKind as TyDefinitionKind, docstring_from_body},
+    place::ScopedPlaceId,
+    scope::ScopeId,
+    semantic_index,
+};
 
 use crate::scip_emit::{
     DefinitionKind, DescriptorKind, Edge, FileData, PackageIdentity, SymbolData, SymbolDescriptor,
@@ -285,13 +291,20 @@ pub(crate) fn index(
             .last()
             .map(|descriptor| descriptor.name.clone())
             .unwrap_or_default();
-        let module_symbol = global_symbol(
+        let mut module_symbol = global_symbol(
             &package,
             &module_descriptors,
             module_name,
             DefinitionKind::Module,
             TextRange::new(0.into(), (source.len() as u32).into()),
         );
+        module_symbol.documentation = {
+            let module = parsed_module(&db, program_file.python_file(&db)).load(&db);
+            docstring_from_body(module.suite())
+                .map(|expression| expression.value.to_str().to_owned())
+                .into_iter()
+                .collect()
+        };
         let mut globals = HashMap::from([(TextRange::default(), module_symbol)]);
         for (id, info) in hierarchy.iter() {
             collect_global_symbols(
@@ -601,22 +614,38 @@ fn allocate_semantic_symbols<'db>(
                         definition_full_ranges.insert(candidate.attribute_range, raw_range);
                         candidate.attribute_range
                     });
-                definitions.push(((definition.scope(db), definition.place(db)), range));
+                let kind = definition.kind(db);
+                definitions.push((
+                    (definition.scope(db), definition.place(db)),
+                    range,
+                    definition.docstring(db).into_iter().collect::<Vec<_>>(),
+                    definition_signature(kind, &module, source),
+                ));
             }
         }
     }
-    definitions.sort_by_key(|(_, range)| (range.start(), range.end()));
+    definitions.sort_by_key(|(_, range, _, _)| (range.start(), range.end()));
 
     let mut group_ids = HashMap::<(ScopeId<'db>, ScopedPlaceId), usize>::new();
-    let mut groups = Vec::<Vec<TextRange>>::new();
+    let mut groups = Vec::<Vec<(TextRange, Vec<String>, Option<String>)>>::new();
     let mut semantic_bindings = HashMap::<TextRange, Vec<usize>>::new();
-    for (key, range) in definitions {
+    for (key, range, documentation, signature) in definitions {
         let group = *group_ids.entry(key).or_insert_with(|| {
             groups.push(Vec::new());
             groups.len() - 1
         });
-        if !groups[group].contains(&range) {
-            groups[group].push(range);
+        if let Some((_, existing_documentation, existing_signature)) = groups[group]
+            .iter_mut()
+            .find(|(existing_range, _, _)| *existing_range == range)
+        {
+            if existing_documentation.is_empty() {
+                *existing_documentation = documentation;
+            }
+            if existing_signature.is_none() {
+                *existing_signature = signature;
+            }
+        } else {
+            groups[group].push((range, documentation, signature));
         }
         let bindings = semantic_bindings.entry(range).or_default();
         if !bindings.contains(&group) {
@@ -629,40 +658,94 @@ fn allocate_semantic_symbols<'db>(
     for ranges in groups {
         let ranges = ranges
             .into_iter()
-            .filter(|range| semantic_bindings[range].len() == 1)
+            .filter(|(range, _, _)| semantic_bindings[range].len() == 1)
             .collect::<Vec<_>>();
         if ranges.is_empty() {
             continue;
         }
         let existing = ranges
             .iter()
-            .find_map(|range| globals.get(range).or_else(|| instance_symbols.get(range)))
+            .find_map(|(range, _, _)| globals.get(range).or_else(|| instance_symbols.get(range)))
             .cloned();
         let symbol = existing.unwrap_or_else(|| {
             let display_name = ranges
                 .iter()
-                .map(|range| source_slice(source, *range))
+                .map(|(range, _, _)| source_slice(source, *range))
                 .min_by_key(|name| (name.len(), *name))
                 .expect("semantic definition group is not empty")
                 .to_owned();
-            let symbol = local_symbol(next_local, display_name, ranges[0]);
+            let symbol = local_symbol(next_local, display_name, ranges[0].0);
             next_local += 1;
             symbol
         });
-        for range in ranges {
+        for (range, documentation, signature) in ranges {
             let full_range = definition_full_ranges.get(&range).copied().unwrap_or(range);
             let symbol = SymbolData {
                 full_range,
+                documentation,
+                signature,
                 ..symbol.clone()
             };
             if symbol.is_local() {
                 locals.insert(range, symbol);
             } else {
-                globals.entry(range).or_insert(symbol);
+                globals
+                    .entry(range)
+                    .and_modify(|existing| {
+                        if existing.documentation.is_empty() {
+                            existing.documentation.clone_from(&symbol.documentation);
+                        }
+                        if existing.signature.is_none() {
+                            existing.signature.clone_from(&symbol.signature);
+                        }
+                    })
+                    .or_insert(symbol);
             }
         }
     }
     (locals, semantic_bindings, canonical_definition_ranges)
+}
+
+fn definition_signature(
+    kind: &TyDefinitionKind<'_>,
+    module: &ParsedModuleRef,
+    source: &str,
+) -> Option<String> {
+    match kind {
+        TyDefinitionKind::Function(definition) => {
+            let function = definition.node(module);
+            let end = function
+                .returns
+                .as_deref()
+                .map_or_else(|| function.parameters.end(), Ranged::end);
+            let header = source_slice(source, TextRange::new(function.name.start(), end));
+            Some(format!(
+                "{} {header}",
+                if function.is_async {
+                    "async def"
+                } else {
+                    "def"
+                }
+            ))
+        }
+        TyDefinitionKind::Class(definition) => {
+            let class = definition.node(module);
+            let end = class.arguments.as_deref().map_or_else(
+                || {
+                    class
+                        .type_params
+                        .as_deref()
+                        .map_or_else(|| class.name.end(), Ranged::end)
+                },
+                Ranged::end,
+            );
+            Some(format!(
+                "class {}",
+                source_slice(source, TextRange::new(class.name.start(), end))
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn collect_global_symbols(
