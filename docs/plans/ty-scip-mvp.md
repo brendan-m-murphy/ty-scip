@@ -17,8 +17,8 @@ drop-in symbol compatibility only after the core approach works.
 
 - Planning and source/API reconnaissance are complete.
 - The workspace started as an empty Git repository.
-- Phase 0 is complete. Phase 1 now includes stable callable-parameter symbols
-  and a non-fatal policy for unsupported cross-file local targets.
+- Phases 0 and 1 are complete. Phase 2 now focuses on making skipped resolution
+  cases measurable before adding richer occurrence roles.
 - Rust 1.98.1 was installed after the initial environment check. The Codex app
   shell has not refreshed its `PATH`, so commands currently use
   `/Users/bm13805/.cargo/bin/cargo` explicitly.
@@ -278,6 +278,8 @@ durable lexical path, and module/distribution ownership.
   411 chunks, 15,191 mentions, and 6,351 definition ranges. The resulting 4.1
   MB index still passes SCIP 0.10 lint, and the complete search, members,
   references, and file-dependencies acceptance gate passes.
+- **2026-09-08:** Closed Phase 1 with a focused Unicode regression proving that
+  typed and legacy ranges use UTF-8 byte offsets after non-ASCII source text.
 
 ## Deliberate follow-ups
 

@@ -584,4 +584,21 @@ mod tests {
         assert!(occurrence.has_single_line_range());
         assert!(occurrence.has_multi_line_enclosing_range());
     }
+
+    #[test]
+    fn occurrence_positions_are_utf8_byte_offsets() {
+        let occurrence = occurrence(
+            "π = value\n",
+            TextRange::new(5.into(), 10.into()),
+            "symbol".into(),
+            SymbolRole::ReadAccess as i32,
+        );
+
+        assert_eq!(occurrence.range, [0, 5, 10]);
+        let typed = occurrence.single_line_range();
+        assert_eq!(
+            (typed.line, typed.start_character, typed.end_character),
+            (0, 5, 10)
+        );
+    }
 }
