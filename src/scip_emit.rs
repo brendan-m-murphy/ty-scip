@@ -15,6 +15,7 @@ use scip::{
 #[derive(Clone, Copy)]
 pub(crate) enum DefinitionKind {
     Module,
+    Import,
     Class,
     Method,
     Function,
@@ -70,6 +71,7 @@ pub(crate) struct FileData {
     pub(crate) locals: HashMap<TextRange, SymbolData>,
     pub(crate) semantic_bindings: HashMap<TextRange, Vec<usize>>,
     pub(crate) canonical_definition_ranges: HashMap<TextRange, TextRange>,
+    pub(crate) occurrence_roles: HashMap<TextRange, i32>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -208,6 +210,15 @@ pub(crate) fn write_index(
                     *range,
                     symbol.symbol.clone(),
                     symbol.full_range,
+                    file.occurrence_roles
+                        .get(range)
+                        .copied()
+                        .unwrap_or_default()
+                        | if matches!(symbol.kind, DefinitionKind::Import) {
+                            SymbolRole::Import as i32
+                        } else {
+                            0
+                        },
                 )
             }));
     }
@@ -232,7 +243,11 @@ pub(crate) fn write_index(
             &line_indices[edge.source_file],
             edge.source_range,
             symbol.symbol.clone(),
-            SymbolRole::ReadAccess as i32,
+            data[edge.source_file]
+                .occurrence_roles
+                .get(&edge.source_range)
+                .copied()
+                .unwrap_or(SymbolRole::ReadAccess as i32),
         ));
     }
     for document in &mut documents {
@@ -242,6 +257,7 @@ pub(crate) fn write_index(
         document
             .symbols
             .dedup_by(|left, right| left.symbol == right.symbol);
+        merge_occurrences(&mut document.occurrences);
     }
 
     let index = Index {
@@ -288,6 +304,7 @@ fn scip_descriptor(descriptor: &SymbolDescriptor) -> Descriptor {
 fn symbol_kind(kind: DefinitionKind) -> symbol_information::Kind {
     match kind {
         DefinitionKind::Module => symbol_information::Kind::Module,
+        DefinitionKind::Import => symbol_information::Kind::Module,
         DefinitionKind::Class => symbol_information::Kind::Class,
         DefinitionKind::Method => symbol_information::Kind::Method,
         DefinitionKind::Function => symbol_information::Kind::Function,
@@ -354,13 +371,14 @@ fn definition_occurrence(
     range: TextRange,
     symbol: String,
     enclosing_range: TextRange,
+    roles: i32,
 ) -> Occurrence {
     let mut occurrence = occurrence(
         source,
         line_index,
         range,
         symbol,
-        SymbolRole::Definition as i32,
+        SymbolRole::Definition as i32 | roles,
     );
     let (start_line, start_character) = position(line_index, source, enclosing_range.start());
     let (end_line, end_character) = position(line_index, source, enclosing_range.end());
@@ -386,6 +404,32 @@ fn definition_occurrence(
         });
     }
     occurrence
+}
+
+fn merge_occurrences(occurrences: &mut Vec<Occurrence>) {
+    occurrences.sort_by(|left, right| {
+        left.range
+            .cmp(&right.range)
+            .then_with(|| left.symbol.cmp(&right.symbol))
+    });
+    let mut merged: Vec<Occurrence> = Vec::with_capacity(occurrences.len());
+    for occurrence in occurrences.drain(..) {
+        if let Some(previous) = merged.last_mut()
+            && previous.range == occurrence.range
+            && previous.symbol == occurrence.symbol
+        {
+            previous.symbol_roles |= occurrence.symbol_roles;
+            if previous.enclosing_range.is_empty() {
+                previous.enclosing_range = occurrence.enclosing_range;
+            }
+            if previous.typed_enclosing_range.is_none() {
+                previous.typed_enclosing_range = occurrence.typed_enclosing_range;
+            }
+        } else {
+            merged.push(occurrence);
+        }
+    }
+    *occurrences = merged;
 }
 
 fn position(line_index: &LineIndex, source: &str, offset: ruff_text_size::TextSize) -> (i32, i32) {
@@ -422,6 +466,7 @@ mod tests {
             TextRange::new(4.into(), 5.into()),
             "symbol".into(),
             TextRange::new(0.into(), (source.len() as u32).into()),
+            0,
         );
 
         assert_eq!(occurrence.range, [0, 4, 5]);
@@ -461,6 +506,7 @@ mod tests {
                 TextRange::new(start.into(), (start + 5).into()),
                 "symbol".into(),
                 TextRange::new(0.into(), (source.len() as u32).into()),
+                0,
             );
 
             assert_eq!(occurrence.range, [1, 9, 14]);
@@ -488,5 +534,36 @@ mod tests {
 
         assert_eq!(information.len(), 1);
         assert_eq!(information[0].display_name, "earlier");
+    }
+
+    #[test]
+    fn merging_occurrences_preserves_definition_metadata() {
+        let source = "value = 1\n";
+        let line_index = LineIndex::from_source_text(source);
+        let range = TextRange::new(0.into(), 5.into());
+        let mut occurrences = vec![
+            occurrence(
+                source,
+                &line_index,
+                range,
+                "local 0".into(),
+                SymbolRole::ReadAccess as i32,
+            ),
+            definition_occurrence(
+                source,
+                &line_index,
+                range,
+                "local 0".into(),
+                TextRange::new(0.into(), (source.len() as u32).into()),
+                0,
+            ),
+        ];
+
+        merge_occurrences(&mut occurrences);
+
+        assert_eq!(occurrences.len(), 1);
+        assert_eq!(occurrences[0].symbol_roles, 9);
+        assert_eq!(occurrences[0].enclosing_range, [0, 0, 1, 0]);
+        assert!(occurrences[0].has_multi_line_enclosing_range());
     }
 }

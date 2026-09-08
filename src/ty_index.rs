@@ -6,10 +6,11 @@ use ruff_db::{
     system::{OsSystem, SystemPathBuf},
 };
 use ruff_python_ast::{
-    AnyNodeRef, Identifier,
+    AnyNodeRef, Expr, ExprContext, Identifier,
     visitor::source_order::{SourceOrderVisitor, TraversalSignal},
 };
 use ruff_text_size::{Ranged, TextRange};
+use scip::types::SymbolRole;
 use ty_ide::{HierarchicalSymbols, SymbolId, SymbolInfo, SymbolKind};
 use ty_module_resolver::file_to_module;
 use ty_project::{Db as _, ProjectDatabase, ProjectMetadata, SemanticDb as _};
@@ -32,6 +33,95 @@ pub(crate) struct IndexData {
 
 #[derive(Default)]
 struct IdentifierRanges(Vec<TextRange>);
+
+#[derive(Default)]
+struct OccurrenceRoles(HashMap<TextRange, i32>);
+
+impl OccurrenceRoles {
+    fn add(&mut self, range: TextRange, role: SymbolRole) {
+        *self.0.entry(range).or_default() |= role as i32;
+    }
+
+    fn add_context(&mut self, range: TextRange, context: ExprContext) {
+        self.add(
+            range,
+            match context {
+                ExprContext::Load | ExprContext::Invalid => SymbolRole::ReadAccess,
+                ExprContext::Store | ExprContext::Del => SymbolRole::WriteAccess,
+            },
+        );
+    }
+
+    fn add_augmented_target(&mut self, target: &Expr) {
+        match target {
+            Expr::Name(name) => {
+                self.add(name.range(), SymbolRole::ReadAccess);
+                self.add(name.range(), SymbolRole::WriteAccess);
+            }
+            Expr::Attribute(attribute) => {
+                self.add(attribute.attr.range(), SymbolRole::ReadAccess);
+                self.add(attribute.attr.range(), SymbolRole::WriteAccess);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl<'ast> SourceOrderVisitor<'ast> for OccurrenceRoles {
+    fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
+        match node {
+            AnyNodeRef::ExprName(name) => self.add_context(name.range(), name.ctx),
+            AnyNodeRef::ExprAttribute(attribute) => {
+                self.add_context(attribute.attr.range(), attribute.ctx);
+            }
+            AnyNodeRef::StmtAugAssign(statement) => {
+                self.add_augmented_target(&statement.target);
+            }
+            AnyNodeRef::Keyword(keyword) => {
+                if let Some(name) = &keyword.arg {
+                    self.add(name.range(), SymbolRole::ReadAccess);
+                }
+            }
+            AnyNodeRef::PatternKeyword(keyword) => {
+                self.add(keyword.attr.range(), SymbolRole::ReadAccess);
+            }
+            AnyNodeRef::StmtImportFrom(statement) => {
+                if let Some(module) = &statement.module {
+                    self.add(module.range(), SymbolRole::Import);
+                }
+            }
+            AnyNodeRef::Alias(alias) => {
+                self.add(alias.range(), SymbolRole::Import);
+                self.add(alias.name.range(), SymbolRole::Import);
+                if let Some(name) = &alias.asname {
+                    self.add(name.range(), SymbolRole::Import);
+                }
+            }
+            AnyNodeRef::ExceptHandlerExceptHandler(handler) => {
+                if let Some(name) = &handler.name {
+                    self.add(name.range(), SymbolRole::WriteAccess);
+                }
+            }
+            AnyNodeRef::PatternMatchMapping(pattern) => {
+                if let Some(name) = &pattern.rest {
+                    self.add(name.range(), SymbolRole::WriteAccess);
+                }
+            }
+            AnyNodeRef::PatternMatchStar(pattern) => {
+                if let Some(name) = &pattern.name {
+                    self.add(name.range(), SymbolRole::WriteAccess);
+                }
+            }
+            AnyNodeRef::PatternMatchAs(pattern) => {
+                if let Some(name) = &pattern.name {
+                    self.add(name.range(), SymbolRole::WriteAccess);
+                }
+            }
+            _ => {}
+        }
+        TraversalSignal::Traverse
+    }
+}
 
 impl<'ast> SourceOrderVisitor<'ast> for IdentifierRanges {
     fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
@@ -221,6 +311,12 @@ pub(crate) fn index(
             }
             .visit_body(module.suite());
         }
+        let occurrence_roles = {
+            let module = parsed_module(&db, program_file.python_file(&db)).load(&db);
+            let mut roles = OccurrenceRoles::default();
+            roles.visit_body(module.suite());
+            roles.0
+        };
         let (locals, semantic_bindings, canonical_definition_ranges) =
             allocate_semantic_symbols(&db, program_file, &source, &mut globals);
         data.push(FileData {
@@ -230,6 +326,7 @@ pub(crate) fn index(
             locals,
             semantic_bindings,
             canonical_definition_ranges,
+            occurrence_roles,
         });
     }
 
@@ -616,7 +713,7 @@ fn symbol_kinds(kind: SymbolKind) -> (DescriptorKind, DefinitionKind) {
         SymbolKind::Constant => (DescriptorKind::Term, DefinitionKind::Constant),
         SymbolKind::Property => (DescriptorKind::Term, DefinitionKind::Property),
         SymbolKind::Field => (DescriptorKind::Term, DefinitionKind::Field),
-        SymbolKind::Import => (DescriptorKind::Term, DefinitionKind::Module),
+        SymbolKind::Import => (DescriptorKind::Term, DefinitionKind::Import),
     }
 }
 

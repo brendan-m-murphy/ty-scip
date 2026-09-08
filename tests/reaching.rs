@@ -35,11 +35,12 @@ fn groups_reaching_definitions_by_semantic_place() {
     assert_eq!(first.symbol, second.symbol);
     assert_eq!(first.symbol, read.symbol);
     assert!(first.symbol.starts_with("local "));
-    assert_eq!(first.symbol_roles, SymbolRole::Definition as i32);
-    assert_eq!(second.symbol_roles, SymbolRole::Definition as i32);
+    let definition_write = SymbolRole::Definition as i32 | SymbolRole::WriteAccess as i32;
+    assert_eq!(first.symbol_roles, definition_write);
+    assert_eq!(second.symbol_roles, definition_write);
     assert!(unused.symbol.starts_with("local "));
     assert_ne!(unused.symbol, first.symbol);
-    assert_eq!(unused.symbol_roles, SymbolRole::Definition as i32);
+    assert_eq!(unused.symbol_roles, definition_write);
     assert_eq!(read.symbol_roles, SymbolRole::ReadAccess as i32);
     fs::remove_file(index).expect("remove test index");
 }

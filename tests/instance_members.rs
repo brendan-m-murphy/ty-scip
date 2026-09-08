@@ -51,9 +51,15 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
     ] {
         assert_eq!(occurrence.symbol, first.symbol);
     }
-    assert_eq!(first.symbol_roles, SymbolRole::Definition as i32);
+    assert_eq!(
+        first.symbol_roles,
+        SymbolRole::Definition as i32 | SymbolRole::WriteAccess as i32
+    );
     assert_eq!(first.enclosing_range, [4, 8, 18]);
-    assert_eq!(repeated.symbol_roles, SymbolRole::Definition as i32);
+    assert_eq!(
+        repeated.symbol_roles,
+        SymbolRole::Definition as i32 | SymbolRole::WriteAccess as i32
+    );
     assert_eq!(same_file_read.symbol_roles, SymbolRole::ReadAccess as i32);
     assert_eq!(cross_file_read.symbol_roles, SymbolRole::ReadAccess as i32);
     assert_eq!(inherited_read.symbol_roles, SymbolRole::ReadAccess as i32);
@@ -73,7 +79,7 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
     assert_eq!(
         all_occurrences
             .iter()
-            .filter(|occurrence| occurrence.symbol_roles == SymbolRole::Definition as i32)
+            .filter(|occurrence| { occurrence.symbol_roles & SymbolRole::Definition as i32 != 0 })
             .count(),
         3
     );

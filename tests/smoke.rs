@@ -31,27 +31,36 @@ fn resolves_the_four_spike_cases() {
     let decoded = support::read_index(&index);
     let main = support::document(&decoded, "src/main.py");
     let library = support::document(&decoded, "src/library.py");
-    for (read, definition) in [
+    let definition_write = SymbolRole::Definition as i32 | SymbolRole::WriteAccess as i32;
+    for (read, definition, definition_roles) in [
         (
             support::occurrence(main, &[8, 11, 20]),
             support::occurrence(main, &[7, 4, 13]),
+            definition_write,
         ),
         (
             support::occurrence(main, &[8, 21, 27]),
             support::occurrence(library, &[5, 8, 14]),
+            SymbolRole::Definition as i32,
         ),
         (
             support::occurrence(main, &[8, 28, 32]),
             support::occurrence(library, &[0, 4, 10]),
+            SymbolRole::Definition as i32,
         ),
         (
             support::occurrence(main, &[8, 33, 40]),
             support::occurrence(main, &[6, 4, 11]),
+            definition_write,
         ),
     ] {
         assert_eq!(read.symbol, definition.symbol);
         assert_eq!(read.symbol_roles, SymbolRole::ReadAccess as i32);
-        assert_eq!(definition.symbol_roles, SymbolRole::Definition as i32);
+        assert_eq!(
+            definition.symbol_roles, definition_roles,
+            "definition at {:?}",
+            definition.range
+        );
     }
     assert!(
         first
