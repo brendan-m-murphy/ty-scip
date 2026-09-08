@@ -79,6 +79,8 @@ The current index includes:
 - unambiguous first-party name, attribute, import, re-export, and keyword
   references;
 - normalization of overloads and repeated definitions that denote one binding;
+- stable lexical symbols for named nested functions and classes while anonymous
+  and ordinary function-local bindings remain document-local;
 - class-member identities for instance attributes that ty proves belong to a
   direct, undecorated method's class, including inherited reads;
 - direct first-party class-base implementation relationships;
@@ -104,7 +106,9 @@ layer because protobuf validity alone does not prove that converted mentions
 survive.
 
 On the frozen 281-document OpenGHG checkout, four release-mode runs with the
-same arguments produced byte-identical indexes. An earlier benchmarked
+same project produced byte-identical indexes, including when written to
+different output paths. Index replacement uses an exclusively created sibling
+temporary file followed by an atomic rename. An earlier benchmarked
 revision indexed in 1.29 seconds and converted to 464 chunks and 15,999
 mentions. Two planning tasks produced accurate scopes and 24/24 valid cited
 locations, but this arm did not beat built-in search: it used about 34% more

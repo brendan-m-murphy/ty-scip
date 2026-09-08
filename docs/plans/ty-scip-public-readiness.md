@@ -227,3 +227,19 @@ a first-target heuristic.
   the error set changes across runs of identical bytes, while the focused
   cross-file fixture lints cleanly. No invalid external-symbol workaround was
   added for that consumer defect.
+- **2026-09-09:** Promoted named definitions nested beneath callables through
+  ty's existing document-symbol hierarchy. Nested functions, classes, methods,
+  and parameters now have stable lexical symbols; duplicate names in different
+  enclosing callables stay distinct, while branches of one binding coalesce.
+  Lambdas, comprehensions, and ordinary locals remain deterministic document
+  locals. This deleted the six-line recursion stop and added no dependency.
+  OpenGHG's five split definition/write occurrences became five correctly
+  merged definition-and-write occurrences; semantic targets were otherwise
+  unchanged.
+- **2026-09-09:** Removed process arguments from SCIP tool metadata, converted
+  project roots with the standard URL implementation, and made output
+  replacement atomic through an exclusively created sibling temporary file.
+  Tests cover different output paths producing identical bytes, reserved and
+  Unicode URI characters, replacement of existing output, failure cleanup,
+  and absence of temporary residue. Two OpenGHG runs targeting different paths
+  produced the same SHA-256.

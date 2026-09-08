@@ -69,11 +69,13 @@ Dynamic versions are not executed or imported. Multi-distribution monorepos,
 editable-install ownership, standard-library version identity, and installed
 distribution ownership are not implemented.
 
-Function-local symbols are allocated deterministically in source order. When
+Named nested functions and classes use stable lexical global symbols. Other
+function-local symbols are allocated deterministically in source order. When
 several declarations represent one semantic binding, their local symbol uses
-one deterministic display name. A repeated run is byte-identical only when
-the checkout and complete arguments are identical: SCIP metadata records the
-arguments, including the output path.
+one deterministic display name. Tool metadata intentionally omits host command
+arguments, so a repeated run is byte-identical when the checkout, project
+configuration, and package identity are identical, even if the output path
+changes.
 
 Resolution outcomes mean:
 
@@ -131,7 +133,12 @@ one module and avoids copying analyzer logic or maintaining a fork.
 
 ## Platform and release limits
 
-The current source build is the distribution mechanism. The Cargo package is
+The current source build is the distribution mechanism. Index files are
+written through an exclusively created sibling temporary file, flushed, and
+atomically renamed over the destination; failed writes remove their temporary
+file. Project roots use standards-based percent-encoded file URIs.
+
+The Cargo package is
 marked `publish = false`, the ty/Ruff dependencies are pinned Git crates, and
 there are no release binaries. macOS is exercised locally; Windows behavior
 is not claimed until file-URI and replacement-rename behavior are tested in
