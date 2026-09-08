@@ -1892,6 +1892,7 @@ dependencies = [
  "protobuf",
  "ruff_db",
  "ruff_python_ast",
+ "ruff_source_file",
  "ruff_text_size",
  "scip",
  "ty_ide",

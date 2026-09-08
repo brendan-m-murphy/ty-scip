@@ -1,5 +1,6 @@
 use std::{collections::HashMap, env, fs, path::Path};
 
+use ruff_source_file::{LineIndex, PositionEncoding as RuffPositionEncoding};
 use ruff_text_size::TextRange;
 use scip::{
     symbol::{format_symbol, parse_symbol},
@@ -133,6 +134,10 @@ pub(crate) fn write_index(
     data: &[FileData],
     edges: &[Edge],
 ) -> Result<(), String> {
+    let line_indices = data
+        .iter()
+        .map(|file| LineIndex::from_source_text(&file.source))
+        .collect::<Vec<_>>();
     let mut documents = data
         .iter()
         .map(|file| Document {
@@ -144,7 +149,7 @@ pub(crate) fn write_index(
         })
         .collect::<Vec<_>>();
 
-    for (document, file) in documents.iter_mut().zip(data) {
+    for ((document, file), line_index) in documents.iter_mut().zip(data).zip(&line_indices) {
         let mut definitions = file.globals.iter().chain(&file.locals).collect::<Vec<_>>();
         definitions
             .sort_by_key(|(range, symbol)| (range.start(), range.end(), symbol.symbol.as_str()));
@@ -153,6 +158,7 @@ pub(crate) fn write_index(
             .extend(definitions.into_iter().map(|(range, symbol)| {
                 definition_occurrence(
                     &file.source,
+                    line_index,
                     *range,
                     symbol.symbol.clone(),
                     symbol.full_range,
@@ -177,6 +183,7 @@ pub(crate) fn write_index(
         }
         documents[edge.source_file].occurrences.push(occurrence(
             &data[edge.source_file].source,
+            &line_indices[edge.source_file],
             edge.source_range,
             symbol.symbol.clone(),
             SymbolRole::ReadAccess as i32,
@@ -270,10 +277,15 @@ fn symbol_information(
         .collect()
 }
 
-fn occurrence(source: &str, range: TextRange, symbol: String, roles: i32) -> Occurrence {
-    // ponytail: linear offset conversion is enough for the spike; use Ruff's LineIndex if measured.
-    let (line, start_character) = position(source, range.start().to_usize());
-    let (end_line, end_character) = position(source, range.end().to_usize());
+fn occurrence(
+    source: &str,
+    line_index: &LineIndex,
+    range: TextRange,
+    symbol: String,
+    roles: i32,
+) -> Occurrence {
+    let (line, start_character) = position(line_index, source, range.start());
+    let (end_line, end_character) = position(line_index, source, range.end());
     debug_assert_eq!(line, end_line, "Python identifiers cannot span lines");
     let mut occurrence = Occurrence {
         range: vec![line, start_character, end_character],
@@ -292,13 +304,20 @@ fn occurrence(source: &str, range: TextRange, symbol: String, roles: i32) -> Occ
 
 fn definition_occurrence(
     source: &str,
+    line_index: &LineIndex,
     range: TextRange,
     symbol: String,
     enclosing_range: TextRange,
 ) -> Occurrence {
-    let mut occurrence = occurrence(source, range, symbol, SymbolRole::Definition as i32);
-    let (start_line, start_character) = position(source, enclosing_range.start().to_usize());
-    let (end_line, end_character) = position(source, enclosing_range.end().to_usize());
+    let mut occurrence = occurrence(
+        source,
+        line_index,
+        range,
+        symbol,
+        SymbolRole::Definition as i32,
+    );
+    let (start_line, start_character) = position(line_index, source, enclosing_range.start());
+    let (end_line, end_character) = position(line_index, source, enclosing_range.end());
     occurrence.enclosing_range = if start_line == end_line {
         vec![start_line, start_character, end_character]
     } else {
@@ -323,13 +342,12 @@ fn definition_occurrence(
     occurrence
 }
 
-fn position(source: &str, offset: usize) -> (i32, i32) {
-    let before = &source[..offset];
-    let line = before.bytes().filter(|byte| *byte == b'\n').count() as i32;
-    let character = before
-        .rsplit_once('\n')
-        .map_or(before.len(), |(_, tail)| tail.len()) as i32;
-    (line, character)
+fn position(line_index: &LineIndex, source: &str, offset: ruff_text_size::TextSize) -> (i32, i32) {
+    let location = line_index.source_location(offset, source, RuffPositionEncoding::Utf8);
+    (
+        location.line.to_zero_indexed() as i32,
+        location.character_offset.to_zero_indexed() as i32,
+    )
 }
 
 fn file_uri(path: &Path) -> String {
@@ -351,8 +369,10 @@ mod tests {
     #[test]
     fn occurrences_have_typed_and_legacy_ranges() {
         let source = "def f():\n    pass\n";
+        let line_index = LineIndex::from_source_text(source);
         let occurrence = definition_occurrence(
             source,
+            &line_index,
             TextRange::new(4.into(), 5.into()),
             "symbol".into(),
             TextRange::new(0.into(), (source.len() as u32).into()),
@@ -366,8 +386,11 @@ mod tests {
 
     #[test]
     fn occurrence_positions_are_utf8_byte_offsets() {
+        let source = "π = value\n";
+        let line_index = LineIndex::from_source_text(source);
         let occurrence = occurrence(
-            "π = value\n",
+            source,
+            &line_index,
             TextRange::new(5.into(), 10.into()),
             "symbol".into(),
             SymbolRole::ReadAccess as i32,
@@ -379,6 +402,26 @@ mod tests {
             (typed.line, typed.start_character, typed.end_character),
             (0, 5, 10)
         );
+    }
+
+    #[test]
+    fn occurrence_positions_follow_universal_newlines() {
+        for source in ["def f():\r\n    π = value\r\n", "def f():\r    π = value\r"] {
+            let line_index = LineIndex::from_source_text(source);
+            let start = source.find("value").unwrap() as u32;
+            let occurrence = definition_occurrence(
+                source,
+                &line_index,
+                TextRange::new(start.into(), (start + 5).into()),
+                "symbol".into(),
+                TextRange::new(0.into(), (source.len() as u32).into()),
+            );
+
+            assert_eq!(occurrence.range, [1, 9, 14]);
+            assert_eq!(occurrence.enclosing_range, [0, 0, 2, 0]);
+            assert!(occurrence.has_single_line_range());
+            assert!(occurrence.has_multi_line_enclosing_range());
+        }
     }
 
     #[test]
