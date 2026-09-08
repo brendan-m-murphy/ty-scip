@@ -839,12 +839,6 @@ fn collect_global_symbols(
             info.full_range,
         ),
     );
-    if matches!(
-        info.kind,
-        SymbolKind::Function | SymbolKind::Method | SymbolKind::Constructor
-    ) {
-        return;
-    }
     for (child_id, child) in hierarchy.children(id) {
         collect_global_symbols(hierarchy, child_id, child, package, &descriptors, output);
     }
