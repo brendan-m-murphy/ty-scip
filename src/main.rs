@@ -438,7 +438,7 @@ fn main() -> Result<(), String> {
                 allocated_groups.push(group);
             }
             let symbol = format_symbol(Symbol::new_local(file_data.locals.len()));
-            let definition_ranges = group.map_or_else(
+            let mut definition_ranges = group.map_or_else(
                 || vec![range],
                 |group| {
                     file_data
@@ -450,12 +450,19 @@ fn main() -> Result<(), String> {
                         .collect()
                 },
             );
+            definition_ranges.sort_unstable_by_key(|range| (range.start(), range.end()));
+            let display_name = definition_ranges
+                .iter()
+                .map(|range| source_slice(&file_data.source, *range))
+                .min_by_key(|name| (name.len(), *name))
+                .expect("local definition group is not empty")
+                .to_owned();
             for definition_range in definition_ranges {
                 file_data.locals.insert(
                     definition_range,
                     SymbolData {
                         symbol: symbol.clone(),
-                        display_name: source_slice(&file_data.source, definition_range).to_owned(),
+                        display_name: display_name.clone(),
                         kind: symbol_information::Kind::Variable,
                         full_range: definition_range,
                     },
@@ -598,6 +605,28 @@ fn symbol_data(
     }
 }
 
+fn symbol_information(
+    globals: &HashMap<TextRange, SymbolData>,
+    locals: &HashMap<TextRange, SymbolData>,
+) -> Vec<SymbolInformation> {
+    let mut symbols = globals.iter().chain(locals).collect::<Vec<_>>();
+    symbols.sort_by(|(left_range, left), (right_range, right)| {
+        left.symbol.cmp(&right.symbol).then_with(|| {
+            (left_range.start(), left_range.end()).cmp(&(right_range.start(), right_range.end()))
+        })
+    });
+    symbols.dedup_by(|left, right| left.1.symbol == right.1.symbol);
+    symbols
+        .into_iter()
+        .map(|(_, symbol)| SymbolInformation {
+            symbol: symbol.symbol.clone(),
+            kind: symbol.kind.into(),
+            display_name: symbol.display_name.clone(),
+            ..Default::default()
+        })
+        .collect()
+}
+
 fn write_index(
     root: &Path,
     output: &Path,
@@ -609,17 +638,7 @@ fn write_index(
         .map(|file| Document {
             language: "python".into(),
             relative_path: file.relative_path.clone(),
-            symbols: file
-                .globals
-                .values()
-                .chain(file.locals.values())
-                .map(|symbol| SymbolInformation {
-                    symbol: symbol.symbol.clone(),
-                    kind: symbol.kind.into(),
-                    display_name: symbol.display_name.clone(),
-                    ..Default::default()
-                })
-                .collect(),
+            symbols: symbol_information(&file.globals, &file.locals),
             position_encoding: PositionEncoding::UTF8CodeUnitOffsetFromLineStart.into(),
             ..Default::default()
         })
@@ -810,5 +829,25 @@ mod tests {
             (typed.line, typed.start_character, typed.end_character),
             (0, 5, 10)
         );
+    }
+
+    #[test]
+    fn symbol_information_uses_the_earliest_definition() {
+        let symbol = |display_name: &str, start: u32| SymbolData {
+            symbol: "local 0".into(),
+            display_name: display_name.into(),
+            kind: symbol_information::Kind::Variable,
+            full_range: TextRange::new(start.into(), (start + 1).into()),
+        };
+        let globals = HashMap::new();
+        let locals = HashMap::from([
+            (TextRange::new(20.into(), 21.into()), symbol("later", 20)),
+            (TextRange::new(10.into(), 11.into()), symbol("earlier", 10)),
+        ]);
+
+        let information = symbol_information(&globals, &locals);
+
+        assert_eq!(information.len(), 1);
+        assert_eq!(information[0].display_name, "earlier");
     }
 }

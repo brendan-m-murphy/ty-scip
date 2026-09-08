@@ -43,6 +43,8 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
   CI, and a documented update procedure for the Ruff revision.
 - Golden SCIP-level tests and a repeatable differential evaluation against
   `scip-python` cover representative static Python constructs.
+- Repeated indexing of the same checkout with the same arguments is
+  byte-for-byte deterministic.
 - The actual supported `scip-cli` search, members, refs, and deps gate passes on
   a freshly converted database.
 
@@ -109,10 +111,11 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Complete the feature/API parity map, then implement class-owned instance-member
-symbols as the next evidenced navigation gap. The remaining 39 first-party
-ambiguities stay unresolved until typed occurrence resolution can remove
-constructor/`__call__` expansion without a first-target heuristic.
+Implement class-owned instance-member symbols as the next evidenced navigation
+gap, then add project identity and the minimum public CLI/release surface. The
+remaining 39 first-party ambiguities stay unresolved until typed occurrence
+resolution can remove constructor/`__call__` expansion without a first-target
+heuristic.
 
 ## Progress log
 
@@ -129,3 +132,25 @@ constructor/`__call__` expansion without a first-target heuristic.
   `protobuf` crate as a dev dependency. Keyword overload and reaching-definition
   tests now assert exact SCIP symbols, ranges, and roles instead of relying on
   protobuf byte substrings.
+- **2026-09-08:** Completed the pinned public ty/Ruff API map. Useful next
+  surfaces include semantic tokens, semantic definition/place tables, method
+  decorators, docstrings, type hierarchy, dependency ownership, and Ruff's
+  line index. Cursor-oriented reference and implementation APIs remain useful
+  as targeted oracles, not as per-occurrence bulk indexer APIs. The primary
+  upstream opportunity is a stable bulk resolved-occurrence API with exact
+  ranges, roles, targets, ownership, aliases, signatures, and documentation.
+- **2026-09-08:** Recorded the second OpenGHG agent benchmark at revision
+  `b9822d1`. Coverage increased from 428 to 464 SQLite chunks and from 15,293
+  to 15,999 mentions, and all 24 cited locations were valid. It did not
+  demonstrate an efficiency win over built-in search: total tokens were about
+  34% higher, uncached input 6.5% higher, and elapsed time 2% slower. This makes
+  `ty-scip` a credible fast structural-navigation backend, but agent efficiency
+  is not yet a release claim.
+- **2026-09-08:** Reproduced the benchmark's nondeterministic local-symbol
+  metadata. Four symbols alternated between equivalent alias or qualified-name
+  display strings because hash-map order selected the retained metadata.
+  Local groups now choose the shortest, then lexicographically smallest name;
+  serialized symbol information is sorted by symbol and definition range.
+  Four fresh release-mode OpenGHG runs using identical arguments produced the
+  same SHA-256 (`d2fa1291dc941f6cc0c91ff972ec0d260a1e4c75769b15f61b872035bfa1169b`)
+  with unchanged occurrence and omission counts.
