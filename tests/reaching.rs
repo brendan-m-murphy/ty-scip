@@ -27,6 +27,7 @@ fn groups_reaching_definitions_by_semantic_place() {
     assert!(output.stdout.is_empty());
 
     let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
     let document = support::document(&decoded, "main.py");
     let first = support::occurrence(document, &[2, 8, 14]);
     let second = support::occurrence(document, &[4, 8, 14]);

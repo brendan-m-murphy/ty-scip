@@ -40,6 +40,7 @@ fn emits_source_docs_and_deterministic_syntax_signatures() {
     );
     let first = fs::read(&index).expect("read SCIP index");
     let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
     let document = support::document(&decoded, "library.py");
 
     assert_eq!(

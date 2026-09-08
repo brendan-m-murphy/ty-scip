@@ -30,6 +30,7 @@ fn keeps_distinct_semantic_places_ambiguous() {
     );
     assert!(output.stdout.is_empty());
     let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
     let document = support::document(&decoded, "main.py");
     assert!(
         document
@@ -60,6 +61,7 @@ fn keeps_distinct_global_symbol_kinds_ambiguous() {
     );
     assert!(output.stdout.is_empty());
     let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
     let document = support::document(&decoded, "main.py");
     assert!(
         document

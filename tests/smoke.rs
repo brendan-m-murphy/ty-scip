@@ -29,6 +29,7 @@ fn resolves_the_four_spike_cases() {
     let first = fs::read(&index).expect("read index");
     assert!(!first.is_empty());
     let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
     let main = support::document(&decoded, "src/main.py");
     let library = support::document(&decoded, "src/library.py");
     let definition_write = SymbolRole::Definition as i32 | SymbolRole::WriteAccess as i32;

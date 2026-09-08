@@ -33,6 +33,7 @@ fn resolves_cross_module_keyword_arguments_to_parameters() {
     let first = fs::read(&index).expect("read index");
     assert!(!first.is_empty());
     let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
     let caller = support::document(&decoded, "caller.py");
     let library = support::document(&decoded, "library.py");
     assert!(

@@ -31,6 +31,7 @@ fn run(fixture: &str, label: &str, arguments: &[&str]) -> (PathBuf, Vec<u8>) {
 fn uses_static_pep_621_identity_without_changing_import_names() {
     let (path, _) = run("static", "pep621", &[]);
     let index = support::read_index(&path);
+    support::assert_index_integrity(&index);
     let provider = support::document(&index, "src/provider.py");
     let consumer = support::document(&index, "src/consumer.py");
     let definition = support::occurrence(provider, &[0, 4, 10]);
@@ -55,6 +56,7 @@ fn cli_identity_overrides_pep_621_fields_with_positionals() {
         &["--project-name", "override-name", "--project-version=9.8.7"],
     );
     let index = support::read_index(&path);
+    support::assert_index_integrity(&index);
     let provider = support::document(&index, "src/provider.py");
     let symbol = parse_symbol(&support::occurrence(provider, &[0, 4, 10]).symbol)
         .expect("parse global symbol");
@@ -69,6 +71,7 @@ fn cli_identity_overrides_pep_621_fields_with_positionals() {
 fn missing_dynamic_version_is_empty_and_deterministic() {
     let (path, first) = run("dynamic", "repeat", &[]);
     let index = support::read_index(&path);
+    support::assert_index_integrity(&index);
     let document = support::document(&index, "main.py");
     let symbol = parse_symbol(&support::occurrence(document, &[0, 0, 6]).symbol)
         .expect("parse global symbol");

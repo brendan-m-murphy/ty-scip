@@ -24,6 +24,7 @@ fn emits_precise_roles_without_duplicate_occurrences() {
     );
 
     let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
     let library = support::document(&decoded, "library.py");
     let main = support::document(&decoded, "main.py");
     let definition = SymbolRole::Definition as i32;

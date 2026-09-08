@@ -32,6 +32,7 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
     );
 
     let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
     let caller = support::document(&decoded, "caller.py");
     let library = support::document(&decoded, "library.py");
 

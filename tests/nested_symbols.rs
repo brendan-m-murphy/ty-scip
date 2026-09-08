@@ -37,6 +37,7 @@ fn gives_named_nested_definitions_lexical_symbols() {
     );
     let first_bytes = fs::read(&index).expect("read index");
     let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
     let document = support::document(&decoded, "main.py");
 
     let first_worker = definition(document, &[1, 8, 14]);

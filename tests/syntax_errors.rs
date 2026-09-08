@@ -34,6 +34,7 @@ fn indexes_recovered_syntax_and_reports_parser_diagnostics() {
 
     let first = fs::read(&index).expect("read index");
     let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
     let document = support::document(&decoded, "main.py");
     for (reference_range, definition_range) in [
         ([1, 11, 16], [0, 11, 16]),

@@ -41,6 +41,7 @@ fn emits_internal_class_implementation_relationships() {
     );
 
     let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
     let base = support::document(&decoded, "fixture/base.py");
     let models = support::document(&decoded, "fixture/models.py");
     let base_symbol = &symbol(base, "Base").symbol;
