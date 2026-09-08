@@ -200,6 +200,9 @@ fn main() -> Result<(), String> {
     }
 
     let mut edges = Vec::new();
+    let mut unresolved = 0;
+    let mut ambiguous = 0;
+    let mut external = 0;
     for (source_index, file_data) in data.iter().enumerate() {
         let program_file = db.program_file(file_data.file);
         let ranges = {
@@ -211,6 +214,7 @@ fn main() -> Result<(), String> {
 
         for range in ranges {
             let Some(result) = ty_ide::goto_declaration(&db, program_file, range.start()) else {
+                unresolved += 1;
                 continue;
             };
             let mut targets = result
@@ -222,15 +226,21 @@ fn main() -> Result<(), String> {
                 (file.path(&db).to_string(), range.start(), range.end())
             });
             targets.dedup();
-            if let [(target_file, target_range)] = targets.as_slice()
-                && let Some(target_file) = file_indices.get(target_file)
-            {
-                edges.push(Edge {
-                    source_file: source_index,
-                    source_range: range,
-                    target_file: *target_file,
-                    target_range: *target_range,
-                });
+            match targets.as_slice() {
+                [] => unresolved += 1,
+                [(target_file, target_range)] => {
+                    if let Some(target_file) = file_indices.get(target_file) {
+                        edges.push(Edge {
+                            source_file: source_index,
+                            source_range: range,
+                            target_file: *target_file,
+                            target_range: *target_range,
+                        });
+                    } else {
+                        external += 1;
+                    }
+                }
+                _ => ambiguous += 1,
             }
         }
     }
@@ -269,8 +279,13 @@ fn main() -> Result<(), String> {
         }
     }
 
+    let mut references = 0;
     let mut skipped_cross_file_locals = 0;
+    let mut skipped_missing_symbols = 0;
     for edge in &edges {
+        if edge.source_file == edge.target_file && edge.source_range == edge.target_range {
+            continue;
+        }
         let source = &data[edge.source_file];
         let target = &data[edge.target_file];
         let Some(symbol) = target
@@ -278,20 +293,30 @@ fn main() -> Result<(), String> {
             .get(&edge.target_range)
             .or_else(|| target.locals.get(&edge.target_range))
         else {
+            skipped_missing_symbols += 1;
             continue;
         };
         if edge.source_file != edge.target_file && symbol.symbol.starts_with("local ") {
             skipped_cross_file_locals += 1;
             continue;
         }
+        references += 1;
         println!(
             "{}:{:?} -> {}:{:?}",
             source.relative_path, edge.source_range, target.relative_path, edge.target_range,
         );
     }
-    if skipped_cross_file_locals > 0 {
-        eprintln!("skipped {skipped_cross_file_locals} unsupported cross-file local targets");
-    }
+    let definitions = data
+        .iter()
+        .map(|file| file.globals.len() + file.locals.len())
+        .sum::<usize>();
+    eprintln!(
+        "indexed {} files: {definitions} definitions, {references} references; \
+         {unresolved} unresolved, {ambiguous} ambiguous, {external} external, {} skipped \
+         ({skipped_cross_file_locals} cross-file local, {skipped_missing_symbols} missing symbol)",
+        data.len(),
+        skipped_cross_file_locals + skipped_missing_symbols,
+    );
 
     if let Some(output) = output {
         write_index(&root, &output, &data, &edges)?;

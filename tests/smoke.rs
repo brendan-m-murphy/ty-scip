@@ -15,6 +15,11 @@ fn resolves_the_four_spike_cases() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim(),
+        "indexed 3 files: 14 definitions, 12 references; 0 unresolved, 1 ambiguous, \
+         5 external, 0 skipped (0 cross-file local, 0 missing symbol)"
+    );
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 output");
 
     for (source, target) in [

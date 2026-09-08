@@ -17,8 +17,9 @@ drop-in symbol compatibility only after the core approach works.
 
 - Planning and source/API reconnaissance are complete.
 - The workspace started as an empty Git repository.
-- Phases 0 and 1 are complete. Phase 2 now focuses on making skipped resolution
-  cases measurable before adding richer occurrence roles.
+- Phases 0 and 1 are complete. Phase 2 now has measurable resolution outcomes;
+  the next target is collapsing overload candidates that share one durable
+  symbol. Richer occurrence roles remain deferred.
 - Rust 1.98.1 was installed after the initial environment check. The Codex app
   shell has not refreshed its `PATH`, so commands currently use
   `/Users/bm13805/.cargo/bin/cargo` explicitly.
@@ -33,6 +34,12 @@ drop-in symbol compatibility only after the core approach works.
   document-local.
 - The issue #1714 tool-only search/member/reference/dependency gate passes with
   the actual `scip-cli` 2.7.0 binary from a separate OpenGHG root and cache.
+- Resolution attempts now produce one deterministic summary covering files,
+  definitions, resolved references, unresolved and ambiguous candidates,
+  external targets, and safely skipped internal targets.
+- On frozen OpenGHG this reports 14,154 definitions, 32,741 resolved references,
+  4,612 unresolved identifier queries, 11,711 ambiguous queries, 16,740 external
+  targets, and 309 skipped internal edges.
 
 ## Verified decisions
 
@@ -45,6 +52,8 @@ drop-in symbol compatibility only after the core approach works.
 - Use the official Rust SCIP bindings and SCIP symbol utilities.
 - Prefer correct omissions over false links: unresolved or multiply resolved
   references are counted and skipped.
+- Resolution counters describe the AST identifiers queried through ty, not a
+  claim that every possible Python semantic occurrence was enumerated.
 - Unsupported cross-file document-local targets are counted and skipped rather
   than aborting an otherwise useful repository index.
 - Keep ty/Ruff coupling in one module so a future supported Astral API can
@@ -280,6 +289,19 @@ durable lexical path, and module/distribution ownership.
   references, and file-dependencies acceptance gate passes.
 - **2026-09-08:** Closed Phase 1 with a focused Unicode regression proving that
   typed and legacy ranges use UTF-8 byte offsets after non-ASCII source text.
+- **2026-09-08:** Started Phase 2 by making resolution omissions measurable.
+  The indexer now reports mutually exclusive unresolved, ambiguous, external,
+  missing-symbol, and cross-file-local outcomes alongside emitted definitions
+  and references. Richer occurrence roles remain deferred until their syntax
+  contexts can be represented without guessing.
+- **2026-09-08:** Frozen OpenGHG reports 14,154 definitions, 32,741 emitted
+  references, 4,612 unresolved, 11,711 ambiguous, 16,740 external, and 309
+  skipped internal edges (306 cross-file-local and three missing symbols). Both
+  SCIP 0.8.1 and 0.10 lint pass, and the actual isolated `scip-cli` search,
+  reference, and dependency queries remain green.
+- **2026-09-08:** Extended the existing fixtures rather than adding a counter-
+  only project. Exact summary checks now exercise nonzero unresolved,
+  ambiguous, external, and cross-file-local outcomes.
 
 ## Deliberate follow-ups
 
