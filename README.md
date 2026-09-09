@@ -30,6 +30,12 @@ cargo build --release --locked
 ./target/release/ty-scip --help
 ```
 
+To install the current checkout on your `PATH`:
+
+```console
+cargo install --locked --path .
+```
+
 ## Use
 
 ```console
