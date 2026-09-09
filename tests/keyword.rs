@@ -25,8 +25,8 @@ fn resolves_cross_module_keyword_arguments_to_parameters() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stderr).trim(),
-        "indexed 2 files: 26 definitions, 19 references; 1 unresolved, 0 ambiguous, \
-         10 external, 0 skipped (0 cross-file local, 0 missing symbol)"
+        "indexed 2 files: 26 definitions, 29 references; 1 unresolved, 0 ambiguous, \
+         0 external, 0 skipped (0 cross-file local, 0 missing symbol)"
     );
     assert!(output.stdout.is_empty());
 

@@ -85,6 +85,7 @@ pub(crate) struct FileData {
     pub(crate) canonical_definition_ranges: HashMap<TextRange, TextRange>,
     pub(crate) occurrence_roles: HashMap<TextRange, i32>,
     pub(crate) relationships: Vec<RelationshipEdge>,
+    pub(crate) external_references: Vec<(TextRange, SymbolData)>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -277,6 +278,22 @@ pub(crate) fn write_index(
                 .unwrap_or(SymbolRole::ReadAccess as i32),
         ));
     }
+    for ((document, file), line_index) in documents.iter_mut().zip(data).zip(&line_indices) {
+        document
+            .occurrences
+            .extend(file.external_references.iter().map(|(range, symbol)| {
+                occurrence(
+                    &file.source,
+                    line_index,
+                    *range,
+                    symbol.symbol.clone(),
+                    file.occurrence_roles
+                        .get(range)
+                        .copied()
+                        .unwrap_or(SymbolRole::ReadAccess as i32),
+                )
+            }));
+    }
     for document in &mut documents {
         document
             .symbols
@@ -287,6 +304,13 @@ pub(crate) fn write_index(
         merge_occurrences(&mut document.occurrences);
     }
 
+    let mut external_symbols = data
+        .iter()
+        .flat_map(|file| &file.external_references)
+        .map(|(_, symbol)| symbol)
+        .collect::<Vec<_>>();
+    external_symbols.sort_by(|left, right| left.symbol.cmp(&right.symbol));
+    external_symbols.dedup_by(|left, right| left.symbol == right.symbol);
     let index = Index {
         metadata: Some(Metadata {
             version: ProtocolVersion::UnspecifiedProtocolVersion.into(),
@@ -310,6 +334,10 @@ pub(crate) fn write_index(
         })
         .into(),
         documents,
+        external_symbols: external_symbols
+            .into_iter()
+            .map(|symbol| symbol_information_from_data(symbol, Vec::new()))
+            .collect(),
         ..Default::default()
     };
     let bytes = index.write_to_bytes().map_err(|error| error.to_string())?;
@@ -428,17 +456,24 @@ fn symbol_information(
                 ..Default::default()
             })
             .collect();
-        information.push(SymbolInformation {
-            symbol: symbol.symbol.clone(),
-            documentation: symbol.documentation.clone(),
-            relationships: symbol_relationships,
-            kind: symbol_kind(symbol.kind).into(),
-            display_name: symbol.display_name.clone(),
-            signature_documentation: symbol.signature.as_deref().map(python_signature).into(),
-            ..Default::default()
-        });
+        information.push(symbol_information_from_data(symbol, symbol_relationships));
     }
     information
+}
+
+fn symbol_information_from_data(
+    symbol: &SymbolData,
+    relationships: Vec<Relationship>,
+) -> SymbolInformation {
+    SymbolInformation {
+        symbol: symbol.symbol.clone(),
+        documentation: symbol.documentation.clone(),
+        relationships,
+        kind: symbol_kind(symbol.kind).into(),
+        display_name: symbol.display_name.clone(),
+        signature_documentation: symbol.signature.as_deref().map(python_signature).into(),
+        ..Default::default()
+    }
 }
 
 fn python_signature(text: &str) -> Signature {

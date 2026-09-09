@@ -1,6 +1,11 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    fs,
+    path::PathBuf,
+};
 
 use ruff_db::{
+    files::File,
     parsed::{ParsedModuleRef, parsed_module},
     source::source_text,
     system::{OsSystem, SystemPathBuf},
@@ -368,6 +373,7 @@ pub(crate) fn index(
             canonical_definition_ranges,
             occurrence_roles,
             relationships: Vec::new(),
+            external_references: Vec::new(),
         });
     }
 
@@ -383,6 +389,8 @@ pub(crate) fn index(
     let mut unresolved_samples = 0;
     let mut ambiguous_samples = 0;
     let mut samples = Vec::new();
+    let mut external_symbols = HashMap::<File, HashMap<TextRange, SymbolData>>::new();
+    let mut external_references = vec![Vec::new(); data.len()];
     for (source_index, file_data) in data.iter().enumerate() {
         let program_file = db.program_file(files[source_index]);
         let ranges = {
@@ -512,6 +520,10 @@ pub(crate) fn index(
                             target_file: *target_file,
                             target_range: *target_range,
                         });
+                    } else if let Some(symbol) =
+                        stdlib_symbol(&db, *target_file, *target_range, &mut external_symbols)
+                    {
+                        external_references[source_index].push((range, symbol));
                     } else {
                         external += 1;
                     }
@@ -553,6 +565,17 @@ pub(crate) fn index(
         )
     });
     edges.dedup();
+    for (file, mut references) in data.iter_mut().zip(external_references) {
+        references.sort_by(|(left_range, left), (right_range, right)| {
+            (left_range.start(), left_range.end(), left.symbol.as_str()).cmp(&(
+                right_range.start(),
+                right_range.end(),
+                right.symbol.as_str(),
+            ))
+        });
+        references.dedup_by(|left, right| left.0 == right.0 && left.1.symbol == right.1.symbol);
+        file.external_references = references;
+    }
 
     Ok(IndexData {
         root,
@@ -565,6 +588,60 @@ pub(crate) fn index(
         unsupported_syntax_errors,
         samples,
     })
+}
+
+fn stdlib_symbol(
+    db: &ProjectDatabase,
+    target_file: File,
+    target_range: TextRange,
+    cache: &mut HashMap<File, HashMap<TextRange, SymbolData>>,
+) -> Option<SymbolData> {
+    let program_file = db.program_file(target_file);
+    let module = file_to_module(db, program_file.resolver_file(db))?;
+    if !module.search_path(db)?.is_standard_library() || module.is_type_check_only(db) {
+        return None;
+    }
+    if let Entry::Vacant(entry) = cache.entry(target_file) {
+        let package = PackageIdentity {
+            name: "python-stdlib".into(),
+            version: module.python_version(db).to_string(),
+        };
+        let module_descriptors = module
+            .name(db)
+            .components()
+            .map(|name| SymbolDescriptor {
+                name: name.to_owned(),
+                kind: DescriptorKind::Namespace,
+            })
+            .collect::<Vec<_>>();
+        let module_name = module_descriptors
+            .last()
+            .map(|descriptor| descriptor.name.clone())
+            .unwrap_or_default();
+        let mut symbols = HashMap::from([(
+            TextRange::default(),
+            global_symbol(
+                &package,
+                &module_descriptors,
+                module_name,
+                DefinitionKind::Module,
+                TextRange::default(),
+            ),
+        )]);
+        let hierarchy = ty_ide::document_symbols(db, program_file).to_hierarchical();
+        for (id, info) in hierarchy.iter() {
+            collect_global_symbols(
+                &hierarchy,
+                id,
+                info,
+                &package,
+                &module_descriptors,
+                &mut symbols,
+            );
+        }
+        entry.insert(symbols);
+    }
+    cache.get(&target_file)?.get(&target_range).cloned()
 }
 
 fn collect_relationships(

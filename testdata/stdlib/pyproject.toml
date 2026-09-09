@@ -1,0 +1,6 @@
+[project]
+name = "stdlib-consumer"
+version = "1.0.0"
+
+[tool.ty.environment]
+python-version = "3.12"

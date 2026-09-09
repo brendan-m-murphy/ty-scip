@@ -110,6 +110,11 @@ fn run() -> Result<(), String> {
         }
         references += 1;
     }
+    references += index
+        .files
+        .iter()
+        .map(|file| file.external_references.len())
+        .sum::<usize>();
     let definitions = index
         .files
         .iter()
