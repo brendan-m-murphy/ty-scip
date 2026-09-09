@@ -14,7 +14,7 @@ use ruff_python_ast::{
     AnyNodeRef, Expr, ExprContext, Identifier,
     visitor::source_order::{SourceOrderVisitor, TraversalSignal},
 };
-use ruff_text_size::{Ranged, TextRange};
+use ruff_text_size::{Ranged, TextRange, TextSize};
 use scip::types::SymbolRole;
 use ty_ide::{HierarchicalSymbols, SymbolId, SymbolInfo, SymbolKind};
 use ty_module_resolver::file_to_module;
@@ -51,7 +51,7 @@ pub(crate) struct IndexData {
 
 #[derive(Default)]
 struct IdentifierRanges {
-    identifiers: Vec<(TextRange, bool)>,
+    identifiers: Vec<(TextRange, bool, bool)>,
     string_literals: Vec<TextRange>,
 }
 
@@ -147,12 +147,13 @@ impl<'ast> SourceOrderVisitor<'ast> for OccurrenceRoles {
 impl<'ast> SourceOrderVisitor<'ast> for IdentifierRanges {
     fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
         match node {
-            AnyNodeRef::ExprName(name) => self.identifiers.push((name.range(), true)),
+            AnyNodeRef::ExprName(name) => self.identifiers.push((name.range(), true, false)),
             AnyNodeRef::ExprSubscript(subscript) => {
                 if let Expr::StringLiteral(string) = subscript.slice.as_ref()
                     && let Some(string) = string.as_single_part_string()
                 {
-                    self.identifiers.push((string.content_range(), false));
+                    self.identifiers
+                        .push((string.content_range(), false, false));
                 }
             }
             AnyNodeRef::ExprStringLiteral(string) => self.string_literals.push(string.range()),
@@ -162,7 +163,8 @@ impl<'ast> SourceOrderVisitor<'ast> for IdentifierRanges {
     }
 
     fn visit_identifier(&mut self, identifier: &'ast Identifier) {
-        self.identifiers.push((identifier.range(), true));
+        self.identifiers
+            .push((identifier.range(), true, identifier.as_str().contains('.')));
     }
 }
 
@@ -411,20 +413,27 @@ pub(crate) fn index(
                         *literal != token.range && literal.contains_range(token.range)
                     })
                 {
-                    visitor.identifiers.push((token.range, true));
+                    visitor.identifiers.push((token.range, true, false));
                 }
             }
             visitor
                 .identifiers
-                .sort_unstable_by_key(|(range, report)| (range.start(), range.end(), !report));
+                .sort_unstable_by_key(|(range, report, lookup_at_end)| {
+                    (range.start(), range.end(), !lookup_at_end, !report)
+                });
             visitor
                 .identifiers
-                .dedup_by_key(|(range, _)| (range.start(), range.end()));
+                .dedup_by_key(|(range, _, _)| (range.start(), range.end()));
             visitor.identifiers
         };
 
-        for (range, report_unresolved) in ranges {
-            let mut targets = ty_ide::goto_declaration(&db, program_file, range.start())
+        for (range, report_unresolved, lookup_at_end) in ranges {
+            let lookup_position = if lookup_at_end {
+                range.end() - TextSize::new(1)
+            } else {
+                range.start()
+            };
+            let mut targets = ty_ide::goto_declaration(&db, program_file, lookup_position)
                 .into_iter()
                 .flat_map(|result| result.value)
                 .map(|target| {

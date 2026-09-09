@@ -82,6 +82,12 @@ fn resolves_package_import_forms_and_reexports_deterministically() {
     }
 
     let module_symbol = &support::occurrence(module, &[0, 0, 0]).symbol;
+    let package_symbol = &support::occurrence(package, &[0, 0, 0]).symbol;
+    for range in [[0, 7, 22], [3, 5, 20]] {
+        let imported_module = support::occurrence(consumer, &range);
+        assert_eq!(imported_module.symbol, *module_symbol);
+        assert_ne!(imported_module.symbol, *package_symbol);
+    }
     for range in [[0, 26, 40], [2, 21, 27]] {
         let occurrence = occurrence_with_symbol(consumer, &range, module_symbol);
         assert_eq!(
