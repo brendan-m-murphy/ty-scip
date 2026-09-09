@@ -17,6 +17,8 @@ ruff_source_file = { git = "https://github.com/astral-sh/ruff", rev = "12132db28
 ruff_text_size = { git = "https://github.com/astral-sh/ruff", rev = "12132db2885084f4b87aafc5908e336e7b5e8fbd" }
 protobuf = "=3.7.2"
 scip = "=0.10.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "=1.1.5"
 ty_ide = { git = "https://github.com/astral-sh/ruff", rev = "12132db2885084f4b87aafc5908e336e7b5e8fbd" }
 ty_module_resolver = { git = "https://github.com/astral-sh/ruff", rev = "12132db2885084f4b87aafc5908e336e7b5e8fbd" }

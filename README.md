@@ -94,6 +94,25 @@ metadata, then an empty deterministic fallback.
 See [migrating from scip-python](docs/migration-from-scip-python.md) for the
 supported command mapping and deliberately unsupported options.
 
+### Experimental Graphify projection
+
+`scip-graphify` converts any compatible SCIP protobuf directly to Graphify's
+JSON graph shape without first reducing it to scip-cli's SQLite schema:
+
+```console
+scip-graphify index.scip graph.json
+graphify path add_timed_data plan_timed_data_update --graph graph.json
+graphify affected plan_timed_data_update --graph graph.json
+```
+
+The disposable JSON retains exact SCIP symbols, kinds, occurrence ranges and
+roles, enclosing-definition ownership, and relationships. It emits honest
+`references`, `imports`, `inherits`, and derived `contains` edges; it does not
+mislabel a reference as a runtime `calls` edge. Occurrence-level multigraphs
+are substantially larger and noisier for broad natural-language queries than
+Graphify's AST-oriented graph, so this projection is intended for precise
+paths and impact analysis rather than replacing the canonical `.scip` index.
+
 ## What it indexes
 
 The current index includes:
