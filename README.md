@@ -112,6 +112,9 @@ mislabel a reference as a runtime `calls` edge. Occurrence-level multigraphs
 are substantially larger and noisier for broad natural-language queries than
 Graphify's AST-oriented graph, so this projection is intended for precise
 paths and impact analysis rather than replacing the canonical `.scip` index.
+The [graph-query plan](docs/plans/scip-graph-query.md) records the prototype
+evidence, lossless SQLite design, accuracy gate, and possible ty/Ruff
+enrichments.
 
 ## What it indexes
 
