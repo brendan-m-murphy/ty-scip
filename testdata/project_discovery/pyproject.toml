@@ -1,0 +1,6 @@
+[project]
+name = "project-discovery-fixture"
+version = "1.0.0"
+
+[tool.ty.src]
+exclude = ["excluded.py"]
