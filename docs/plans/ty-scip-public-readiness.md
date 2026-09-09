@@ -114,14 +114,16 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-No further local semantic expansion is justified with the pinned public APIs.
-Create the intended GitHub repository and exercise hosted CI before calling a
-tagged source release. A binary release additionally needs a generated and
-reviewed locked transitive notice bundle. Installed-package ownership,
-complete project-walk diagnostics, and method-override relationships stay
-upstream API requests. The remaining 39 first-party ambiguities stay
-unresolved until a typed bulk occurrence API can remove constructor/`__call__`
-expansion without a first-target heuristic.
+Adopt the staged [distribution plan](ty-scip-distribution.md) before creating
+the public remote. The existing Rust executable should be distributed through
+Maturin binary-only PyPI wheels, not a Python wrapper. First fix the dotted
+import-module regression found by differential OpenGHG analysis, then add the
+bounded `scip-python`-style CLI surface and platform release gates. A binary
+release additionally needs a generated and reviewed locked transitive notice
+bundle. Installed-package ownership, complete project-walk diagnostics, and
+method-override relationships stay upstream API requests. The remaining 39
+first-party ambiguities stay unresolved until a typed bulk occurrence API can
+remove constructor/`__call__` expansion without a first-target heuristic.
 
 ## Progress log
 
@@ -383,3 +385,17 @@ expansion without a first-target heuristic.
   versioned crates.io dependencies, while the pinned ty crates are unpublished.
   Retained `publish = false` and the GitHub-checkout installation path instead
   of adding unusable placeholder versions or publishing a broken `.crate`.
+- **2026-09-09:** Compared the patched `scip-python` OpenGHG artifact with the
+  current index by document path, occurrence range, and projected target
+  definition. Definition coverage is effectively complete, but 594 of 600
+  disjoint shared first-party targets exposed one systematic bug: dotted
+  import-module spans resolve to the root package instead of the specific
+  imported module. The other six concern inherited or property-backed receiver
+  attributes. Added the import regression to the first binary-release gate.
+- **2026-09-09:** Chose a binary-first packaging architecture. The recommendation
+  is to retain `ty-scip` for the repository, Cargo package, executable, PyPI
+  distribution, and symbol scheme, with an explicit independent-project
+  disclaimer. Publish the existing Rust executable through Maturin `bin`
+  wheels; do not create a Python wrapper merely to reach PyPI. PyPI wheels and
+  matching GitHub archives are the first release channels; crates.io, npm,
+  Homebrew, containers, and a Python API remain demand-driven follow-ups.
