@@ -40,7 +40,7 @@ scip-query --index INDEX.scip [--root PATH] [--limit N] path SOURCE TARGET [--ma
 scip-query --index INDEX.scip [--root PATH] [--limit N] affected SELECTOR [--max-depth N]
 scip-query --index INDEX.scip build-db DATABASE
 scip-query sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both] [--path PREFIX] [--offset N] [--limit N]
-scip-query sql-tests DATABASE SELECTOR [--path PREFIX] [--offset N] [--limit N]
+scip-query sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N] [--offset N] [--limit N]
 scip-query sql-stats DATABASE
 ```
 
@@ -83,10 +83,13 @@ selectors include bounded suggestions.
   index. It groups repeated occurrences with the same source, target, document,
   roles, and provenance, reporting their count and first location. The direct
   commands remain available for unmerged records and richer context.
-- `sql-tests` returns bounded test references to a class, its directly owned
-  members, and its SCIP implementation/type-definition subtypes. A method query
-  also includes its owning class and that class's subtypes. Its default path is
-  `tests/`; use `--path` for another test tree.
+- `sql-tests` returns bounded test references to a symbol and follows internal
+  callable references up to `--depth` (default 4). Each result includes its
+  depth and evidence path. Class projections include directly owned members and
+  SCIP implementation/type-definition subtypes; method projections include the
+  owning class. Its default path is `tests/`; use `--path` for another test tree.
+  Until a synchronized ty callee-position sidecar exists, downstream paths are
+  callable-reference paths rather than claims about runtime calls.
 - `sql-stats` reports cache row counts for parity checks.
 
 SQL queries collapse document-local import bindings onto the global symbol when

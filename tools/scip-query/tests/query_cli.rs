@@ -53,6 +53,11 @@ impl Fixture {
             "from pkg import Alpha\n\ndef test_alpha():\n    value = Alpha()\n    value.run()\n\nclass TestAlpha(Alpha):\n    pass\n",
         )
         .unwrap();
+        fs::write(
+            root.join("tests/test_leaf.py"),
+            "from pkg.leaf import leaf\n\ndef test_leaf():\n    assert leaf() == 1\n",
+        )
+        .unwrap();
 
         let index = root.join("index.scip");
         fs::write(&index, synthetic_index().write_to_bytes().unwrap()).unwrap();
@@ -238,6 +243,11 @@ fn synthetic_index() -> Index {
                     definition(TEST_ALPHA, &[6, 6, 15], &[6, 0, 8, 0]),
                     reference(ALPHA, &[6, 16, 21], SymbolRole::ReadAccess as i32),
                 ],
+                ..Default::default()
+            },
+            Document {
+                relative_path: "tests/test_leaf.py".into(),
+                occurrences: vec![reference(LEAF, &[3, 11, 15], SymbolRole::ReadAccess as i32)],
                 ..Default::default()
             },
         ],
@@ -486,8 +496,8 @@ fn sqlite_cache_preserves_facts_and_groups_reference_occurrences() {
     let database_text = database.to_str().unwrap();
 
     let built = fixture.success(&["build-db", database_text]);
-    assert_eq!(built["result"]["documents"], 6);
-    assert_eq!(built["result"]["occurrences"], 23);
+    assert_eq!(built["result"]["documents"], 7);
+    assert_eq!(built["result"]["occurrences"], 24);
     assert_eq!(built["result"]["relationships"], 2);
 
     let stats = fixture.success(&["sql-stats", database_text]);
@@ -577,4 +587,28 @@ fn sqlite_resolves_import_aliases_and_projects_tests() {
             && item["target"] == "pkg.Alpha"
             && item["document"] == "tests/test_models.py"
     }));
+    let downstream = result_items(&method_tests)
+        .iter()
+        .find(|item| item["document"] == "tests/test_leaf.py")
+        .expect("transitive callable references should project downstream tests");
+    assert_eq!(downstream["depth"], 2);
+    assert_eq!(
+        downstream["path"],
+        serde_json::json!(["pkg.Alpha.run", "pkg.helper", "pkg.leaf"])
+    );
+
+    let shallow = fixture.success(&[
+        "sql-tests",
+        database_text,
+        "pkg.Alpha#run",
+        "--depth",
+        "1",
+        "--limit",
+        "10",
+    ]);
+    assert!(
+        result_items(&shallow)
+            .iter()
+            .all(|item| item["document"] != "tests/test_leaf.py")
+    );
 }

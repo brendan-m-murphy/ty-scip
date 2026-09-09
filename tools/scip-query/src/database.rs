@@ -1,13 +1,13 @@
 //! Lossless normalized SQLite cache and high-signal reference projections.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
 use protobuf::Message;
 use rusqlite::{Connection, OpenFlags, params};
-use scip::types::symbol_information;
+use scip::types::{SymbolRole, symbol_information};
 use serde::Serialize;
 
 use super::{QueryIndex, RefDirection, SourceRange, SymbolId};
@@ -193,6 +193,8 @@ pub struct SqlTestSummary {
     pub match_kind: String,
     pub roles: Vec<String>,
     pub occurrences: usize,
+    pub depth: usize,
+    pub path: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -425,6 +427,22 @@ struct TestKey {
     roles_json: String,
 }
 
+#[derive(Clone, Debug)]
+struct TestProjection {
+    match_kind: &'static str,
+    depth: usize,
+    path: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct TestGroup {
+    line: Option<i64>,
+    column: Option<i64>,
+    count: usize,
+    depth: usize,
+    path: Vec<String>,
+}
+
 impl SqlDatabase {
     pub fn open(path: &Path) -> Result<Self> {
         let connection = Connection::open_with_flags(
@@ -517,39 +535,26 @@ impl SqlDatabase {
         &self,
         selector: &str,
         path_prefix: &str,
+        max_depth: usize,
         offset: usize,
         limit: usize,
     ) -> Result<(String, SqlTestPage)> {
         let (symbol_id, resolved) = self.resolve(selector)?;
-        let owner = self.class_owner(symbol_id)?;
-        let root = owner.unwrap_or(symbol_id);
-        let mut targets = BTreeMap::from([(symbol_id, "symbol")]);
-        if owner.is_some() {
-            targets.insert(root, "owner");
-        }
-
-        if owner.is_none() {
-            let mut members = self.connection.prepare(
-                "SELECT DISTINCT symbol_id FROM occurrences
-                 WHERE owner_symbol_id=? AND symbol_id<>owner_symbol_id AND roles & 1 != 0",
-            )?;
-            for member in members
-                .query_map([root], |row| row.get::<_, i64>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-            {
-                targets.entry(member).or_insert("member");
+        let mut targets = BTreeMap::new();
+        let mut seen = BTreeSet::from([symbol_id]);
+        let mut queue = VecDeque::from([(symbol_id, 0, vec![resolved.clone()])]);
+        while let Some((current, depth, path)) = queue.pop_front() {
+            self.add_test_projection(current, depth, &path, &mut targets)?;
+            if depth >= max_depth {
+                continue;
             }
-        }
-
-        let mut subtypes = self.connection.prepare(
-            "SELECT DISTINCT source_symbol_id FROM relationships
-             WHERE target_symbol_id=? AND (is_implementation OR is_type_definition)",
-        )?;
-        for subtype in subtypes
-            .query_map([root], |row| row.get::<_, i64>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-        {
-            targets.entry(subtype).or_insert("subtype");
+            for (target, name) in self.callable_references(current)? {
+                if seen.insert(target) {
+                    let mut next_path = path.clone();
+                    next_path.push(name);
+                    queue.push_back((target, depth + 1, next_path));
+                }
+            }
         }
 
         let mut query = self.connection.prepare(
@@ -559,8 +564,8 @@ impl SqlDatabase {
              JOIN symbols s ON s.id=o.symbol_id
              WHERE o.symbol_id=? AND d.path LIKE ? || '%'",
         )?;
-        let mut groups = BTreeMap::<TestKey, ReferenceGroup>::new();
-        for (target, match_kind) in targets {
+        let mut groups = BTreeMap::<TestKey, TestGroup>::new();
+        for (target, projection) in targets {
             let rows = query.query_map(params![target, path_prefix], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -575,13 +580,15 @@ impl SqlDatabase {
                 let key = TestKey {
                     document,
                     target,
-                    match_kind: match_kind.to_owned(),
+                    match_kind: projection.match_kind.to_owned(),
                     roles_json,
                 };
-                let group = groups.entry(key).or_insert(ReferenceGroup {
+                let group = groups.entry(key).or_insert(TestGroup {
                     line,
                     column,
                     count: 0,
+                    depth: projection.depth,
+                    path: projection.path.clone(),
                 });
                 group.line = group.line.min(line).or(group.line).or(line);
                 group.column = group.column.min(column).or(group.column).or(column);
@@ -589,7 +596,7 @@ impl SqlDatabase {
             }
         }
 
-        let items: Vec<_> = groups
+        let mut items: Vec<_> = groups
             .into_iter()
             .map(|(key, group)| SqlTestSummary {
                 document: key.document,
@@ -599,8 +606,18 @@ impl SqlDatabase {
                 match_kind: key.match_kind,
                 roles: serde_json::from_str(&key.roles_json).unwrap_or_default(),
                 occurrences: group.count,
+                depth: group.depth,
+                path: group.path,
             })
             .collect();
+        items.sort_by(|left, right| {
+            (left.depth, &left.document, &left.target, &left.match_kind).cmp(&(
+                right.depth,
+                &right.document,
+                &right.target,
+                &right.match_kind,
+            ))
+        });
         let total = items.len();
         let items: Vec<_> = items.into_iter().skip(offset).take(limit).collect();
         let returned = items.len();
@@ -616,6 +633,90 @@ impl SqlDatabase {
                 items,
             },
         ))
+    }
+
+    fn add_test_projection(
+        &self,
+        symbol_id: i64,
+        depth: usize,
+        path: &[String],
+        targets: &mut BTreeMap<i64, TestProjection>,
+    ) -> Result<()> {
+        let owner = self.class_owner(symbol_id)?;
+        let root = owner.unwrap_or(symbol_id);
+        insert_projection(targets, symbol_id, "symbol", depth, path);
+        if owner.is_some() {
+            insert_projection(targets, root, "owner", depth, path);
+        }
+
+        if owner.is_none() && self.has_kind(root, symbol_information::Kind::Class as i32)? {
+            let mut members = self.connection.prepare(
+                "SELECT DISTINCT symbol_id FROM occurrences
+                 WHERE owner_symbol_id=? AND symbol_id<>owner_symbol_id AND roles & 1 != 0",
+            )?;
+            for member in members
+                .query_map([root], |row| row.get::<_, i64>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+            {
+                insert_projection(targets, member, "member", depth, path);
+            }
+        }
+
+        let mut subtypes = self.connection.prepare(
+            "SELECT DISTINCT source_symbol_id FROM relationships
+             WHERE target_symbol_id=? AND (is_implementation OR is_type_definition)",
+        )?;
+        for subtype in subtypes
+            .query_map([root], |row| row.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        {
+            insert_projection(targets, subtype, "subtype", depth, path);
+        }
+        Ok(())
+    }
+
+    fn callable_references(&self, source: i64) -> Result<Vec<(i64, String)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT DISTINCT target.id,target.qualified_name,target.kinds_json
+             FROM occurrences occurrence
+             JOIN symbols target ON target.id=occurrence.symbol_id
+             WHERE occurrence.owner_symbol_id=? AND occurrence.roles & 1 = 0
+               AND occurrence.roles & ? != 0
+               AND EXISTS (
+                 SELECT 1 FROM occurrences definition
+                 WHERE definition.symbol_id=target.id AND definition.roles & 1 != 0
+               )
+             ORDER BY target.qualified_name",
+        )?;
+        let rows = statement.query_map(params![source, SymbolRole::ReadAccess as i32], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (id, name, kinds) = row?;
+            let kinds: Vec<i32> = serde_json::from_str(&kinds).unwrap_or_default();
+            if kinds.contains(&(symbol_information::Kind::Function as i32))
+                || kinds.contains(&(symbol_information::Kind::Method as i32))
+            {
+                result.push((id, name));
+            }
+        }
+        Ok(result)
+    }
+
+    fn has_kind(&self, symbol_id: i64, kind: i32) -> Result<bool> {
+        let kinds: String = self.connection.query_row(
+            "SELECT kinds_json FROM symbols WHERE id=?",
+            [symbol_id],
+            |row| row.get(0),
+        )?;
+        Ok(serde_json::from_str::<Vec<i32>>(&kinds)
+            .unwrap_or_default()
+            .contains(&kind))
     }
 
     fn class_owner(&self, symbol_id: i64) -> Result<Option<i64>> {
@@ -878,6 +979,28 @@ fn absorb_group(
     group.line = group.line.min(line).or(group.line).or(line);
     group.column = group.column.min(column).or(group.column).or(column);
     group.count += 1;
+}
+
+fn insert_projection(
+    targets: &mut BTreeMap<i64, TestProjection>,
+    symbol_id: i64,
+    match_kind: &'static str,
+    depth: usize,
+    path: &[String],
+) {
+    let replace = targets
+        .get(&symbol_id)
+        .is_none_or(|current| depth < current.depth);
+    if replace {
+        targets.insert(
+            symbol_id,
+            TestProjection {
+                match_kind,
+                depth,
+                path: path.to_vec(),
+            },
+        );
+    }
 }
 
 fn range_columns(

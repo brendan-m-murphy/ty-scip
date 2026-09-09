@@ -14,7 +14,8 @@ const USAGE: &str = r#"Usage:
   scip-query [--root PATH] [--limit N] INDEX.scip COMMAND ...
   scip-query sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both]
              [--path PREFIX] [--offset N] [--limit N]
-  scip-query sql-tests DATABASE SELECTOR [--path PREFIX] [--offset N] [--limit N]
+  scip-query sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N]
+             [--offset N] [--limit N]
   scip-query sql-stats DATABASE
 
 Commands:
@@ -29,7 +30,7 @@ Commands:
   build-db DATABASE
   sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both] [--path PREFIX]
            [--offset N] [--limit N]
-  sql-tests DATABASE SELECTOR [--path PREFIX] [--offset N] [--limit N]
+  sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N] [--offset N] [--limit N]
   sql-stats DATABASE
 
 Selectors accept raw SCIP symbols and path-qualified names."#;
@@ -99,6 +100,7 @@ enum Command {
         database: PathBuf,
         selector: String,
         path: String,
+        depth: usize,
         offset: usize,
         limit: usize,
     },
@@ -198,7 +200,9 @@ fn parse_command(name: &str, args: &[String], default_limit: usize) -> Result<Co
                     .parse::<usize>()
                     .map_err(|_| "offset must be a non-negative integer".to_owned())?;
             }
-            "--depth" | "--max-depth" if name == "path" || name == "affected" => {
+            "--depth" | "--max-depth"
+                if name == "path" || name == "affected" || name == "sql-tests" =>
+            {
                 let option = args[position].clone();
                 depth = positive(&value(args, &mut position, &option)?, "depth")?;
             }
@@ -281,6 +285,7 @@ fn parse_command(name: &str, args: &[String], default_limit: usize) -> Result<Co
             database: PathBuf::from(database),
             selector: selector.clone(),
             path: path.unwrap_or_else(|| "tests/".to_owned()),
+            depth,
             offset,
             limit,
         }),
@@ -373,12 +378,13 @@ fn execute(cli: Cli) -> Result<u8, String> {
         database,
         selector,
         path,
+        depth,
         offset,
         limit,
     } = &cli.command
     {
         let sql = SqlDatabase::open(database).map_err(|error| error.to_string())?;
-        let (resolved, result) = match sql.tests(selector, path, *offset, *limit) {
+        let (resolved, result) = match sql.tests(selector, path, *depth, *offset, *limit) {
             Ok(result) => result,
             Err(error) => return emit_sql_selection_failure("sql-tests", selector, error),
         };
@@ -386,6 +392,7 @@ fn execute(cli: Cli) -> Result<u8, String> {
             "command": "sql-tests",
             "database": database,
             "path": path,
+            "max_depth": depth,
             "resolved": resolved,
             "result": result,
             "selector": selector,
@@ -877,6 +884,7 @@ mod tests {
                 database: PathBuf::from("cache.sqlite"),
                 selector: "BaseStore".into(),
                 path: "tests/".into(),
+                depth: DEFAULT_DEPTH,
                 offset: 0,
                 limit: DEFAULT_LIMIT,
             }
