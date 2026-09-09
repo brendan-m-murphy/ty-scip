@@ -2,7 +2,9 @@
 name = "ty-scip"
 version = "0.1.0"
 description = "A SCIP indexer for Python built on ty and Ruff"
+authors = ["Brendan Murphy"]
 license = "MIT"
+readme = "README.md"
 repository = "https://github.com/brendan-m-murphy/ty-scip"
 edition = "2024"
 rust-version = "1.96"
