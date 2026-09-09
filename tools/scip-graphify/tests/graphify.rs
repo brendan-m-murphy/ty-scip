@@ -1,6 +1,6 @@
 use scip::types::{
-    Document, Index, MultiLineRange, Occurrence, Relationship, SymbolInformation, SymbolRole,
-    symbol_information,
+    Document, Index, MultiLineRange, Occurrence, Relationship, Signature, SymbolInformation,
+    SymbolRole, symbol_information,
 };
 use scip_graphify::graphify::{to_graph, to_json};
 
@@ -139,6 +139,71 @@ fn json_is_deterministic_and_graphify_shaped() {
 }
 
 #[test]
+fn document_order_does_not_change_canonical_co_definition() {
+    let symbol = "example package demo 1.0 pkg/module/";
+    let source = Document {
+        relative_path: "pkg/module.py".into(),
+        occurrences: vec![definition_with_body(symbol, &[0, 0, 3], &[0, 0, 2, 0])],
+        ..Default::default()
+    };
+    let stub = Document {
+        relative_path: "pkg/module.pyi".into(),
+        occurrences: vec![definition_with_body(symbol, &[1, 0, 3], &[1, 0, 2, 0])],
+        ..Default::default()
+    };
+    let forward = Index {
+        documents: vec![stub.clone(), source.clone()],
+        ..Default::default()
+    };
+    let reverse = Index {
+        documents: vec![source, stub],
+        ..Default::default()
+    };
+
+    assert_eq!(to_json(&forward).unwrap(), to_json(&reverse).unwrap());
+    let graph = to_graph(&forward);
+    let node = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == format!("symbol:{symbol}"))
+        .unwrap();
+    assert_eq!(node.source_file, "pkg/module.py");
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .filter(|edge| edge.relation == "contains" && edge.target == node.id)
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn byte_identical_occurrences_preserve_multigraph_multiplicity() {
+    let index = Index {
+        documents: vec![Document {
+            relative_path: "duplicates.py".into(),
+            occurrences: vec![
+                occurrence("target", &[0, 0, 6], SymbolRole::ReadAccess as i32),
+                occurrence("target", &[0, 0, 6], SymbolRole::ReadAccess as i32),
+            ],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let graph = to_graph(&index);
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .filter(|edge| edge.relation == "references")
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn same_local_symbol_in_two_documents_has_distinct_nodes_and_closed_edges() {
     let index = Index {
         documents: vec![
@@ -271,6 +336,30 @@ fn references_use_definition_enclosing_range_for_ownership() {
         .find(|node| node.id == "symbol:owner")
         .unwrap();
     assert_eq!(definition.source_range.as_deref(), Some(&[0, 4, 7][..]));
+}
+
+#[test]
+fn global_descriptor_recovers_ownership_without_kind_metadata() {
+    let owner = "example package demo 1.0 owner().";
+    let target = "example package demo 1.0 target().";
+    let index = Index {
+        documents: vec![Document {
+            relative_path: "owner.py".into(),
+            occurrences: vec![
+                definition_with_body(owner, &[0, 4, 9], &[0, 0, 3, 0]),
+                occurrence(target, &[2, 2, 2, 8], SymbolRole::ReadAccess as i32),
+            ],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let graph = to_graph(&index);
+    assert!(graph.edges.iter().any(|edge| {
+        edge.source == format!("symbol:{owner}")
+            && edge.target == format!("symbol:{target}")
+            && edge.relation == "references"
+    }));
 }
 
 #[test]
@@ -582,4 +671,55 @@ fn complete_metadata_wins_and_unknown_targets_remain_locationless() {
     assert!(unresolved.source_file.is_empty());
     assert!(unresolved.source_location.is_none());
     assert!(unresolved.scip_kind.is_none());
+}
+
+#[test]
+fn documentation_and_signatures_are_preserved_as_node_metadata() {
+    let symbol = "example package demo 1.0 documented().";
+    let index = Index {
+        documents: vec![Document {
+            relative_path: "documented.py".into(),
+            symbols: vec![SymbolInformation {
+                symbol: symbol.into(),
+                display_name: "documented".into(),
+                documentation: vec!["Second paragraph.".into(), "First paragraph.".into()],
+                signature_documentation: Some(Signature {
+                    language: "python".into(),
+                    text: "def documented(value: int) -> str".into(),
+                    ..Default::default()
+                })
+                .into(),
+                ..Default::default()
+            }],
+            occurrences: vec![occurrence(
+                symbol,
+                &[0, 4, 14],
+                SymbolRole::Definition as i32,
+            )],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let graph = to_graph(&index);
+    let node = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == format!("symbol:{symbol}"))
+        .unwrap();
+    assert_eq!(
+        node.scip_documentation,
+        ["First paragraph.", "Second paragraph."]
+    );
+    assert_eq!(node.scip_description.as_deref(), Some("First paragraph."));
+    assert_eq!(
+        node.rationale.as_deref(),
+        Some("First paragraph.\n\nSecond paragraph.")
+    );
+    assert_eq!(node.scip_signatures.len(), 1);
+    assert_eq!(node.scip_signatures[0].language, "python");
+    assert_eq!(
+        node.scip_signatures[0].text,
+        "def documented(value: int) -> str"
+    );
 }

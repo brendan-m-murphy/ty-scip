@@ -65,10 +65,12 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 5. Explore public ty APIs for inherited members, implementations, type
    definitions, docstrings, signatures, and diagnostics. Record any missing
    stable API as a narrow Astral request.
-6. Keep producer-only semantic evidence here: bulk resolved occurrences,
-   project-walk diagnostics, installed-distribution ownership, upward method
-   overrides, and Ruff-proven callee positions. Prefer standard SCIP fields;
-   consider an optional producer sidecar only after a demonstrated need.
+6. Keep all ty/Ruff extraction here: bulk resolved occurrences, project-walk
+   diagnostics, installed-distribution ownership, upward method overrides, and
+   Ruff-proven callee positions. Use standard SCIP fields when their semantics
+   match exactly. Reserve an optional synchronized producer sidecar for a
+   demonstrated useful observation SCIP cannot express; the first candidate is
+   syntactic `CALLEE_POSITION`, not graph policy or a claimed runtime call.
 
 ### 2. SCIP fidelity
 

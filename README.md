@@ -100,7 +100,7 @@ The experimental [SCIP-to-Graphify consumer](tools/scip-graphify/README.md) is
 an independent Cargo package under `tools/`. It reads standard SCIP and does
 not depend on ty or Ruff. It is not included in the `ty-scip` Python wheel.
 The [spike record](docs/research/scip-graphify-spike.md) documents its evidence
-and possible lossless query-store follow-up.
+and possible evidence-preserving query-store follow-up.
 
 ## What it indexes
 

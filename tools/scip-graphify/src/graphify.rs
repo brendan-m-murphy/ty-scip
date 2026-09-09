@@ -37,8 +37,23 @@ pub struct Node {
     pub scip_symbol: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scip_kind: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scip_description: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scip_documentation: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scip_signatures: Vec<ScipSignature>,
     #[serde(rename = "_origin")]
     pub origin: String,
+}
+
+/// A SCIP signature retained as node metadata for downstream consumers.
+#[derive(Debug, Serialize, Clone, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ScipSignature {
+    pub language: String,
+    pub text: String,
 }
 
 /// A directed Graphify edge with SCIP evidence and an explicit provenance.
@@ -75,6 +90,8 @@ struct SymbolMetadata {
     kind_conflict: bool,
     enclosing_symbol: Option<String>,
     enclosing_conflict: bool,
+    documentation: BTreeSet<String>,
+    signatures: BTreeSet<ScipSignature>,
 }
 
 impl SymbolMetadata {
@@ -109,6 +126,20 @@ impl SymbolMetadata {
                     self.enclosing_conflict = true;
                 }
             }
+        }
+        self.documentation.extend(
+            info.documentation
+                .iter()
+                .filter(|item| !item.is_empty())
+                .cloned(),
+        );
+        if let Some(signature) = info.signature_documentation.as_ref()
+            && (!signature.language.is_empty() || !signature.text.is_empty())
+        {
+            self.signatures.insert(ScipSignature {
+                language: signature.language.clone(),
+                text: signature.text.clone(),
+            });
         }
     }
 }
@@ -227,7 +258,7 @@ fn normalized_range(occurrence: &Occurrence, enclosing: bool) -> Option<(Range, 
 /// Convert an in-memory SCIP index to a deterministic Graphify graph.
 pub fn to_graph(index: &Index) -> Graph {
     let mut nodes = BTreeMap::<String, Node>::new();
-    let mut edges = BTreeMap::<String, Edge>::new();
+    let mut edges = Vec::<Edge>::new();
 
     let mut symbol_info = BTreeMap::<String, SymbolMetadata>::new();
     let mut local_symbol_info = BTreeMap::<String, BTreeMap<String, SymbolMetadata>>::new();
@@ -271,6 +302,10 @@ pub fn to_graph(index: &Index) -> Graph {
             source_range: None,
             scip_symbol: None,
             scip_kind: None,
+            rationale: None,
+            scip_description: None,
+            scip_documentation: Vec::new(),
+            scip_signatures: Vec::new(),
             origin: "scip".to_owned(),
         });
     }
@@ -293,29 +328,39 @@ pub fn to_graph(index: &Index) -> Graph {
             let Some((_, raw_range)) = normalized_range(occurrence, false) else {
                 continue;
             };
-            let symbol = occurrence.symbol.clone();
-            let id = symbol_id(&document.relative_path, &symbol);
-            let info = symbol_metadata_for(
-                &document.relative_path,
-                &symbol_info,
-                &local_symbol_info,
-                &symbol,
-            );
-            let label = display_name(&symbol, info);
-            add_symbol_node(
-                &mut nodes,
-                &id,
-                label,
-                &document.relative_path,
-                &raw_range,
-                &symbol,
-                info,
-                "scip",
-            );
             definitions
                 .entry(document.relative_path.clone())
                 .or_default()
-                .push((range, raw_range, symbol, occurrence.symbol_roles));
+                .push((
+                    range,
+                    raw_range,
+                    occurrence.symbol.clone(),
+                    occurrence.symbol_roles,
+                ));
+        }
+    }
+    for defs in definitions.values_mut() {
+        defs.sort_by(|left, right| {
+            (&left.1, &left.2, left.0, left.3).cmp(&(&right.1, &right.2, right.0, right.3))
+        });
+    }
+    // Documents and definitions are now traversed in canonical order. A
+    // source/stub co-definition therefore receives a stable primary location;
+    // the containment edges below still retain every definition.
+    for (path, defs) in &definitions {
+        for (_, raw_range, symbol, _) in defs {
+            let id = symbol_id(path, symbol);
+            let info = symbol_metadata_for(path, &symbol_info, &local_symbol_info, symbol);
+            add_symbol_node(
+                &mut nodes,
+                &id,
+                display_name(symbol, info),
+                path,
+                raw_range,
+                symbol,
+                info,
+                "scip",
+            );
         }
     }
 
@@ -362,20 +407,17 @@ pub fn to_graph(index: &Index) -> Graph {
         defs.sort_by(|left, right| (&left.0, &left.2).cmp(&(&right.0, &right.2)));
         for (range, raw_range, symbol, roles) in &defs {
             let target = symbol_id(&document.relative_path, symbol);
-            insert_edge(
-                &mut edges,
-                edge(
-                    file.clone(),
-                    target.clone(),
-                    "contains",
-                    "definition",
-                    &document.relative_path,
-                    raw_range,
-                    *roles,
-                    document.position_encoding.value(),
-                    "DERIVED",
-                ),
-            );
+            edges.push(edge(
+                file.clone(),
+                target.clone(),
+                "contains",
+                "definition",
+                &document.relative_path,
+                raw_range,
+                *roles,
+                document.position_encoding.value(),
+                "DERIVED",
+            ));
 
             // Preserve symbol hierarchy as a derived edge. The smallest
             // enclosing definition owns a nested definition just as it owns
@@ -429,20 +471,17 @@ pub fn to_graph(index: &Index) -> Graph {
                         ),
                     );
                 }
-                insert_edge(
-                    &mut edges,
-                    edge(
-                        symbol_id(&document.relative_path, &parent),
-                        target.clone(),
-                        "contains",
-                        "method",
-                        &document.relative_path,
-                        raw_range,
-                        *roles,
-                        document.position_encoding.value(),
-                        "DERIVED",
-                    ),
-                );
+                edges.push(edge(
+                    symbol_id(&document.relative_path, &parent),
+                    target.clone(),
+                    "contains",
+                    "method",
+                    &document.relative_path,
+                    raw_range,
+                    *roles,
+                    document.position_encoding.value(),
+                    "DERIVED",
+                ));
             }
         }
     }
@@ -496,20 +535,17 @@ pub fn to_graph(index: &Index) -> Graph {
                 .map(|(_, _, symbol, _)| symbol_id(&document.relative_path, symbol))
                 .unwrap_or_else(|| file_id(&document.relative_path));
             let (relation, context) = relation_for(occurrence.symbol_roles);
-            insert_edge(
-                &mut edges,
-                edge(
-                    owner,
-                    target,
-                    relation,
-                    context,
-                    &document.relative_path,
-                    &raw_range,
-                    occurrence.symbol_roles,
-                    document.position_encoding.value(),
-                    "SCIP",
-                ),
-            );
+            edges.push(edge(
+                owner,
+                target,
+                relation,
+                context,
+                &document.relative_path,
+                &raw_range,
+                occurrence.symbol_roles,
+                document.position_encoding.value(),
+                "SCIP",
+            ));
         }
     }
 
@@ -591,23 +627,45 @@ pub fn to_graph(index: &Index) -> Graph {
                 relations.push("relationship_definition");
             }
             for relation in relations {
-                insert_edge(
-                    &mut edges,
-                    edge(
-                        source.clone(),
-                        target.clone(),
-                        relation,
-                        "relationship",
-                        source_file,
-                        &[],
-                        0,
-                        position_encoding,
-                        "SCIP",
-                    ),
-                );
+                edges.push(edge(
+                    source.clone(),
+                    target.clone(),
+                    relation,
+                    "relationship",
+                    source_file,
+                    &[],
+                    0,
+                    position_encoding,
+                    "SCIP",
+                ));
             }
         }
     }
+
+    edges.sort_by(|left, right| {
+        (
+            &left.source,
+            &left.target,
+            &left.relation,
+            &left.context,
+            &left.source_file,
+            &left.source_range,
+            left.symbol_roles,
+            left.position_encoding,
+            &left.provenance,
+        )
+            .cmp(&(
+                &right.source,
+                &right.target,
+                &right.relation,
+                &right.context,
+                &right.source_file,
+                &right.source_range,
+                right.symbol_roles,
+                right.position_encoding,
+                &right.provenance,
+            ))
+    });
 
     let graph = Graph {
         // Graphify's query command intentionally loads its persisted graph as
@@ -616,7 +674,7 @@ pub fn to_graph(index: &Index) -> Graph {
         directed: false,
         multigraph: true,
         nodes: nodes.into_values().collect(),
-        edges: edges.into_values().collect(),
+        edges,
         hyperedges: Vec::new(),
         input_tokens: 0,
         output_tokens: 0,
@@ -648,6 +706,9 @@ fn add_symbol_node(
     info: Option<&SymbolMetadata>,
     origin: &str,
 ) {
+    let documentation: Vec<String> = info
+        .map(|item| item.documentation.iter().cloned().collect())
+        .unwrap_or_default();
     nodes.entry(id.to_owned()).or_insert_with(|| Node {
         id: id.to_owned(),
         label,
@@ -657,6 +718,12 @@ fn add_symbol_node(
         source_range: Some(raw_range.to_owned()),
         scip_symbol: Some(symbol.to_owned()),
         scip_kind: info.and_then(|item| item.kind.map(|kind| kind as i32)),
+        rationale: (!documentation.is_empty()).then(|| documentation.join("\n\n")),
+        scip_description: documentation.first().cloned(),
+        scip_documentation: documentation,
+        scip_signatures: info
+            .map(|item| item.signatures.iter().cloned().collect())
+            .unwrap_or_default(),
         origin: origin.to_owned(),
     });
 }
@@ -671,6 +738,9 @@ fn ensure_target_node(
     if nodes.contains_key(id) {
         return;
     }
+    let documentation: Vec<_> = info
+        .map(|item| item.documentation.iter().cloned().collect())
+        .unwrap_or_default();
     nodes.insert(
         id.to_owned(),
         Node {
@@ -682,23 +752,15 @@ fn ensure_target_node(
             source_range: None,
             scip_symbol: Some(symbol.to_owned()),
             scip_kind: info.and_then(|item| item.kind.map(|kind| kind as i32)),
+            rationale: (!documentation.is_empty()).then(|| documentation.join("\n\n")),
+            scip_description: documentation.first().cloned(),
+            scip_documentation: documentation,
+            scip_signatures: info
+                .map(|item| item.signatures.iter().cloned().collect())
+                .unwrap_or_default(),
             origin: "scip".to_owned(),
         },
     );
-}
-
-fn insert_edge(edges: &mut BTreeMap<String, Edge>, edge: Edge) {
-    let key = format!(
-        "{}\0{}\0{}\0{}\0{}\0{:?}\0{}",
-        edge.source,
-        edge.target,
-        edge.relation,
-        edge.context,
-        edge.source_file,
-        edge.source_range,
-        edge.symbol_roles
-    );
-    edges.entry(key).or_insert(edge);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -776,32 +838,45 @@ fn is_lexical_scope(
 ) -> bool {
     // Local bindings (imports, parameters, variables) are not scopes, while
     // local nested callables and types can be valid lexical scopes.
-    let Some(info) = symbol_metadata_for(path, global, local, symbol) else {
-        return false;
-    };
-    let Some(kind) = info.kind else {
-        return false;
-    };
-    if symbol.starts_with("local ") {
-        matches!(
-            kind,
-            symbol_information::Kind::Class
-                | symbol_information::Kind::Method
-                | symbol_information::Kind::Function
-                | symbol_information::Kind::Constructor
-                | symbol_information::Kind::Property
-        )
-    } else {
-        matches!(
-            kind,
-            symbol_information::Kind::Module
-                | symbol_information::Kind::Class
-                | symbol_information::Kind::Method
-                | symbol_information::Kind::Function
-                | symbol_information::Kind::Constructor
-                | symbol_information::Kind::Property
-        )
+    if let Some(kind) = symbol_metadata_for(path, global, local, symbol).and_then(|info| info.kind)
+    {
+        return if symbol.starts_with("local ") {
+            matches!(
+                kind,
+                symbol_information::Kind::Class
+                    | symbol_information::Kind::Method
+                    | symbol_information::Kind::Function
+                    | symbol_information::Kind::Constructor
+                    | symbol_information::Kind::Property
+            )
+        } else {
+            matches!(
+                kind,
+                symbol_information::Kind::Module
+                    | symbol_information::Kind::Class
+                    | symbol_information::Kind::Method
+                    | symbol_information::Kind::Function
+                    | symbol_information::Kind::Constructor
+                    | symbol_information::Kind::Property
+            )
+        };
     }
+
+    // Global SCIP descriptors still distinguish namespaces, types, and
+    // methods when SymbolInformation is absent or conflicting. Local symbols
+    // contain no such evidence and therefore remain conservatively file-owned.
+    scip::symbol::parse_symbol(symbol)
+        .ok()
+        .and_then(|parsed| parsed.descriptors.last().cloned())
+        .and_then(|descriptor| descriptor.suffix.enum_value().ok())
+        .is_some_and(|suffix| {
+            matches!(
+                suffix,
+                scip::types::descriptor::Suffix::Namespace
+                    | scip::types::descriptor::Suffix::Type
+                    | scip::types::descriptor::Suffix::Method
+            )
+        })
 }
 
 /// SCIP local symbols are only unique within a document, so their path is
