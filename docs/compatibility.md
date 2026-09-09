@@ -149,7 +149,10 @@ one module and avoids copying analyzer logic or maintaining a fork.
 The current source build is the distribution mechanism. Index files are
 written through an exclusively created sibling temporary file, flushed, and
 atomically renamed over the destination; failed writes remove their temporary
-file. Project roots use standards-based percent-encoded file URIs.
+file. Project roots use standards-based percent-encoded file URIs. An
+unreadable or undecodable selected source file is an actionable indexing error,
+and no output index is written; parser errors in readable files instead use
+Ruff's recovered tree and are reported in the summary.
 
 The Cargo package is
 marked `publish = false`, the ty/Ruff dependencies are pinned Git crates, and

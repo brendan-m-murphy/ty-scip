@@ -113,12 +113,13 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Complete stable lexical identities for named nested callables and classes,
-then harden output metadata, file URIs, and atomic replacement. After that,
-add syntax-error and unreadable-file resilience before extending package
-ownership. The remaining 39 first-party ambiguities stay unresolved until a
-typed bulk occurrence API can remove constructor/`__call__` expansion without
-a first-target heuristic.
+Finish the remaining low-risk symbol metadata improvements, then produce a
+source-release readiness audit and repeat the frozen OpenGHG plus isolated
+`scip-cli` gates. Installed-package ownership and method-override relationships
+stay upstream-API requests unless a scale-safe public path is found. The
+remaining 39 first-party ambiguities stay unresolved until a typed bulk
+occurrence API can remove constructor/`__call__` expansion without a
+first-target heuristic.
 
 ## Progress log
 
@@ -284,3 +285,8 @@ a first-target heuristic.
   Installed third-party symbols remain deferred because the public API does
   not expose complete distribution ownership and version evidence; import-name
   guessing would produce false package identities.
+- **2026-09-09:** Made selected-source read failures fatal before SCIP emission.
+  Invalid UTF-8 and other `SourceText` read errors now name the affected file,
+  exit unsuccessfully, and leave no output index; a platform-independent
+  invalid-byte fixture covers the policy. Readable parser errors continue to
+  use Ruff's recovered syntax tree and remain non-fatal.

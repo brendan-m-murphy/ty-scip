@@ -101,3 +101,19 @@ fn output_is_reproducible_and_atomically_replaced() {
 
     fs::remove_dir_all(root).expect("remove project");
 }
+
+#[test]
+fn invalid_utf8_source_fails_without_writing_an_index() {
+    let root = project();
+    fs::write(root.join("main.py"), b"value = \xff\n").expect("write invalid source");
+    let output = root.join("index.scip");
+
+    let result = run(&root, &output);
+
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("cannot read project file"), "{stderr}");
+    assert!(stderr.contains("main.py"), "{stderr}");
+    assert!(!output.exists());
+    fs::remove_dir_all(root).expect("remove project");
+}

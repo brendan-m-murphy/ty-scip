@@ -303,7 +303,11 @@ pub(crate) fn index(
             .map_err(|_| format!("project file is outside root: {path}"))?
             .to_string_lossy()
             .replace(std::path::MAIN_SEPARATOR, "/");
-        let source = source_text(&db, file).as_str().to_owned();
+        let source = source_text(&db, file);
+        if let Some(error) = source.read_error() {
+            return Err(format!("cannot read project file {path}: {error}"));
+        }
+        let source = source.as_str().to_owned();
         let program_file = db.program_file(file);
         let parsed = parsed_module(&db, program_file.python_file(&db)).load(&db);
         syntax_errors += parsed.errors().len();
