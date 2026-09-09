@@ -160,14 +160,18 @@ files instead use Ruff's recovered tree and are reported in the summary.
 
 The MIT-licensed Cargo package is therefore marked `publish = false`, the
 ty/Ruff dependencies are pinned Git crates, and there are no release binaries.
-macOS is exercised locally; Windows behavior is not claimed until file-URI and
-replacement-rename behavior are tested in hosted CI. Wheels carry PEP 639
+Hosted core tests and release builds pass with Rust 1.98.1 on Ubuntu 24.04
+x86-64, macOS 26.6 ARM64, and Windows Server 2025 x86-64. The Windows run
+covers existing-output replacement, failed-write temporary-file cleanup,
+percent-encoded project-root URIs, and deterministic repeated indexing. Wheels
+carry PEP 639
 license metadata plus the project license and a generated, locked third-party
 notice bundle covering Ruff/ty, embedded typeshed, and transitive dependencies.
 The optional Maturin SBOM is disabled for the preview because its root package
 identity included build-machine paths; it can return when that provenance can
-be emitted without local paths. Hosted platform and SCIP consumer gates remain
-required before calling binary distribution release-ready.
+be emitted without local paths. The multi-platform wheel matrix and SCIP
+consumer gates remain required before calling binary distribution
+release-ready.
 
 The pinned crates have no external API-stability guarantee. Pin updates are
 deliberate compatibility work, not routine dependency bumps.

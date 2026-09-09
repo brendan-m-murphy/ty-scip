@@ -183,8 +183,10 @@ that history without generating a conflicting initial commit.
   exposed Git's default path limit while fetching Ruff; enabling long paths
   allowed the full build to reach tests. That run then exposed CRLF checkout
   drift in byte-offset fixtures, so `.gitattributes` now keeps repository text
-  at LF. Windows remains unclaimed until the corrected job passes; it is not a
-  first-preview blocker.
+  at LF. The corrected PR job passed all core tests and a release build on
+  Windows Server 2025 x86-64; macOS 26.6 ARM64 and Ubuntu 24.04 x86-64 passed
+  in the same run. Windows wheels remain optional for the first preview until
+  issue #7 validates the packaged artifact.
 
 - **2026-09-09:** Added the optional `index` command, `--output`, `--cwd`, and
   `--quiet` while retaining the original 0.x shorthand. Added an explicit
