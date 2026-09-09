@@ -1,6 +1,6 @@
 # ty-scip public-readiness plan
 
-Status: **GitHub-source ready; awaiting remote and hosted CI**
+Status: **Public remote live; license/platform PR in hosted CI**
 Started: 2026-09-08
 
 ## Goal
@@ -122,8 +122,9 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Exercise hosted CI on the public GitHub remote, beginning with macOS and Windows
-test/build jobs. The dotted-import correction, bounded `scip-python`-style CLI,
+Finish the hosted Linux/macOS gates on the public GitHub remote. Keep Windows
+only if its remaining fixes stay small; it does not block the first preview.
+The dotted-import correction, bounded `scip-python`-style CLI,
 local Maturin binary-wheel smoke test, PEP 639 metadata, reviewed locked notice
 bundle, and wheel artifact checks are complete. PyPI publication still needs
 the hosted wheel/release matrix and release-candidate SCIP/OpenGHG gates.

@@ -124,15 +124,18 @@ Before the first binary preview:
    OpenGHG comparison; imported module spans must not collapse to the root
    package.
 2. Add the small CLI compatibility surface and migration documentation.
-3. Run ordinary CI on Linux, macOS, and Windows; do not claim Windows until
-   atomic replacement, URI, and smoke tests pass there.
+3. Run ordinary CI on Linux and macOS. Windows is not a first-preview blocker;
+   include and claim it only after atomic replacement, URI, and smoke tests
+   pass there.
 4. Generate and review a locked third-party notice bundle covering Ruff/ty,
    embedded typeshed data, and transitive binary dependencies.
 5. Build and install every wheel, then run deterministic fixture and SCIP
    consumer checks against the installed executable.
 6. Run the frozen OpenGHG scale, structural-integrity, differential, and
    `scip-cli` query gates against the release candidate.
-7. Tag `v0.1.0`; record the pinned Ruff commit in release notes. Deliberate
+7. Update the README's status and install commands from the exact supported
+   wheel matrix. This is a pre-publication change, not post-release cleanup.
+8. Tag `v0.1.0`; record the pinned Ruff commit in release notes. Deliberate
    symbol-identity changes require at least a pre-1.0 minor version and a
    changelog warning.
 
@@ -151,11 +154,12 @@ Before the first binary preview:
 
 ## Immediate sequence
 
-1. Create `brendan-m-murphy/ty-scip`, push, and exercise hosted platform CI.
-2. Add the platform wheel matrix and resolve Windows output-replacement
-   semantics before claiming Windows support.
-3. Build release-candidate wheels and publish only after the installed-wheel,
-   SCIP consumer, and frozen OpenGHG gates pass on the release artifacts.
+1. Finish the hosted Linux/macOS gates. Keep Windows in the matrix only if the
+   remaining fixes stay small; otherwise defer it without blocking the preview.
+2. Make the frozen OpenGHG and SCIP consumer gate reproducible in issue #5.
+3. Build release-candidate wheels and archives in issue #7, without publishing.
+4. Update the README with only the install commands and platforms proved by
+   those candidates, then publish after the artifact and OpenGHG gates pass.
 
 Create the public remote from the repository root with:
 
