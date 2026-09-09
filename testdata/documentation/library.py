@@ -55,3 +55,19 @@ def outer() -> int:
 
     return inner(1)
 
+
+def transparent(function):
+    return function
+
+
+class OrdinaryMethods:
+    def method(self) -> None:
+        """Ordinary method documentation."""
+
+    @staticmethod
+    def utility() -> None:
+        """Static method documentation."""
+
+    @transparent
+    def decorated(self) -> None:
+        """Decorated method documentation."""

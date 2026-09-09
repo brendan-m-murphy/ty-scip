@@ -13,13 +13,17 @@ use ruff_text_size::{Ranged, TextRange};
 use scip::types::SymbolRole;
 use ty_ide::{HierarchicalSymbols, SymbolId, SymbolInfo, SymbolKind};
 use ty_module_resolver::file_to_module;
-use ty_project::{Db as _, ProjectDatabase, ProjectMetadata, SemanticDb as _};
+use ty_project::{Db as _, ProjectDatabase, ProjectMetadata};
 use ty_python_core::{
     ProgramFile,
     definition::{DefinitionKind as TyDefinitionKind, docstring_from_body},
     place::ScopedPlaceId,
     scope::ScopeId,
     semantic_index,
+};
+use ty_python_semantic::{
+    Db as SemanticDb, HasType, SemanticModel,
+    types::{PropertyAccessorRole, Type},
 };
 
 use crate::scip_emit::{
@@ -640,13 +644,14 @@ type AllocatedSemanticSymbols = (
 );
 
 fn allocate_semantic_symbols<'db>(
-    db: &'db dyn ty_python_core::Db,
+    db: &'db dyn SemanticDb,
     program_file: ProgramFile<'db>,
     source: &str,
     globals: &mut HashMap<TextRange, SymbolData>,
 ) -> AllocatedSemanticSymbols {
     let index = semantic_index(db, program_file);
     let module = parsed_module(db, program_file.python_file(db)).load(db);
+    let model = SemanticModel::new(db, program_file);
     let mut attribute_candidates = InstanceAttributeCandidates {
         classes: Vec::new(),
         callables: Vec::new(),
@@ -691,28 +696,45 @@ fn allocate_semantic_symbols<'db>(
                         candidate.attribute_range
                     });
                 let kind = definition.kind(db);
+                let property_role = match kind {
+                    TyDefinitionKind::Function(function) => function
+                        .node(&module)
+                        .inferred_type(&model)
+                        .and_then(Type::as_property_instance)
+                        .and_then(|property| property.accessor_role(db, definition)),
+                    _ => None,
+                };
                 definitions.push((
                     (definition.scope(db), definition.place(db)),
                     range,
                     definition.docstring(db).into_iter().collect::<Vec<_>>(),
                     definition_signature(kind, &module, source),
+                    property_role,
                 ));
             }
         }
     }
-    definitions.sort_by_key(|(_, range, _, _)| (range.start(), range.end()));
+    definitions.sort_by_key(|(_, range, _, _, _)| (range.start(), range.end()));
 
     let mut group_ids = HashMap::<(ScopeId<'db>, ScopedPlaceId), usize>::new();
-    let mut groups = Vec::<Vec<(TextRange, Vec<String>, Option<String>)>>::new();
+    let mut groups = Vec::<
+        Vec<(
+            TextRange,
+            Vec<String>,
+            Option<String>,
+            Option<PropertyAccessorRole>,
+        )>,
+    >::new();
     let mut semantic_bindings = HashMap::<TextRange, Vec<usize>>::new();
-    for (key, range, documentation, signature) in definitions {
+    for (key, range, documentation, signature, property_role) in definitions {
         let group = *group_ids.entry(key).or_insert_with(|| {
             groups.push(Vec::new());
             groups.len() - 1
         });
-        if let Some((_, existing_documentation, existing_signature)) = groups[group]
-            .iter_mut()
-            .find(|(existing_range, _, _)| *existing_range == range)
+        if let Some((_, existing_documentation, existing_signature, existing_property_role)) =
+            groups[group]
+                .iter_mut()
+                .find(|(existing_range, _, _, _)| *existing_range == range)
         {
             if existing_documentation.is_empty() {
                 *existing_documentation = documentation;
@@ -720,8 +742,13 @@ fn allocate_semantic_symbols<'db>(
             if existing_signature.is_none() {
                 *existing_signature = signature;
             }
+            if property_accessor_priority(property_role)
+                < property_accessor_priority(*existing_property_role)
+            {
+                *existing_property_role = property_role;
+            }
         } else {
-            groups[group].push((range, documentation, signature));
+            groups[group].push((range, documentation, signature, property_role));
         }
         let bindings = semantic_bindings.entry(range).or_default();
         if !bindings.contains(&group) {
@@ -734,19 +761,30 @@ fn allocate_semantic_symbols<'db>(
     for ranges in groups {
         let ranges = ranges
             .into_iter()
-            .filter(|(range, _, _)| semantic_bindings[range].len() == 1)
+            .filter(|(range, _, _, _)| semantic_bindings[range].len() == 1)
             .collect::<Vec<_>>();
         if ranges.is_empty() {
             continue;
         }
+        let property_metadata = ranges
+            .iter()
+            .filter(|(_, _, _, role)| role.is_some())
+            .min_by_key(|(range, _, _, role)| {
+                (
+                    property_accessor_priority(*role),
+                    range.start(),
+                    range.end(),
+                )
+            })
+            .map(|(_, documentation, signature, _)| (documentation.clone(), signature.clone()));
         let existing = ranges
             .iter()
-            .find_map(|(range, _, _)| globals.get(range).or_else(|| instance_symbols.get(range)))
+            .find_map(|(range, _, _, _)| globals.get(range).or_else(|| instance_symbols.get(range)))
             .cloned();
         let symbol = existing.unwrap_or_else(|| {
             let display_name = ranges
                 .iter()
-                .map(|(range, _, _)| source_slice(source, *range))
+                .map(|(range, _, _, _)| source_slice(source, *range))
                 .min_by_key(|name| (name.len(), *name))
                 .expect("semantic definition group is not empty")
                 .to_owned();
@@ -754,20 +792,30 @@ fn allocate_semantic_symbols<'db>(
             next_local += 1;
             symbol
         });
-        for (range, documentation, signature) in ranges {
+        for (range, mut documentation, mut signature, _) in ranges {
+            if let Some((preferred_documentation, preferred_signature)) = &property_metadata {
+                documentation.clone_from(preferred_documentation);
+                signature.clone_from(preferred_signature);
+            }
             let full_range = definition_full_ranges.get(&range).copied().unwrap_or(range);
-            let symbol = SymbolData {
+            let mut symbol = SymbolData {
                 full_range,
                 documentation,
                 signature,
                 ..symbol.clone()
             };
+            if property_metadata.is_some() {
+                symbol.kind = DefinitionKind::Property;
+            }
             if symbol.is_local() {
                 locals.insert(range, symbol);
             } else {
                 globals
                     .entry(range)
                     .and_modify(|existing| {
+                        if symbol.kind == DefinitionKind::Property {
+                            existing.kind = DefinitionKind::Property;
+                        }
                         if existing.documentation.is_empty() {
                             existing.documentation.clone_from(&symbol.documentation);
                         }
@@ -780,6 +828,15 @@ fn allocate_semantic_symbols<'db>(
         }
     }
     (locals, semantic_bindings, canonical_definition_ranges)
+}
+
+fn property_accessor_priority(role: Option<PropertyAccessorRole>) -> u8 {
+    match role {
+        Some(PropertyAccessorRole::Getter) => 0,
+        Some(PropertyAccessorRole::Setter) => 1,
+        Some(PropertyAccessorRole::Deleter) => 2,
+        None => 3,
+    }
 }
 
 fn definition_signature(

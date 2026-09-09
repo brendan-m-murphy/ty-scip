@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf, process::Command};
 
-use scip::types::{Document, SymbolInformation};
+use scip::types::{Document, SymbolInformation, symbol_information};
 
 mod support;
 
@@ -83,7 +83,11 @@ fn emits_source_docs_and_deterministic_syntax_signatures() {
             symbol.display_name == "value"
                 && signature(symbol).is_some_and(|(_, text)| text.starts_with("def value("))
         })
-        .expect("property method metadata");
+        .expect("property metadata");
+    assert_eq!(
+        property.kind.enum_value().unwrap(),
+        symbol_information::Kind::Property
+    );
     assert_eq!(property.documentation, ["Getter documentation."]);
     assert_eq!(
         signature(property),
@@ -100,6 +104,14 @@ fn emits_source_docs_and_deterministic_syntax_signatures() {
         support::occurrence(document, &[51, 8, 13]).symbol,
         inner.symbol
     );
+
+    for name in ["method", "utility", "decorated"] {
+        assert_ne!(
+            symbol(document, name).kind.enum_value().unwrap(),
+            symbol_information::Kind::Property,
+            "{name} is not a property accessor"
+        );
+    }
 
     let second = run();
     assert!(second.status.success());
