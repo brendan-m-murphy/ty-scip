@@ -1,6 +1,6 @@
 # ty-scip distribution plan
 
-Status: **Accepted; implementation in progress**
+Status: **Local packaging proved; ready for public remote and hosted CI**
 Started: 2026-09-09
 
 ## Goal
@@ -151,8 +151,49 @@ Before the first binary preview:
 
 ## Immediate sequence
 
-1. Fix and regression-test dotted import-module targets.
-2. Implement the bounded CLI compatibility surface.
-3. Add and locally smoke-test Maturin `bin` packaging.
-4. Create `brendan-m-murphy/ty-scip`, push, and exercise hosted platform CI.
-5. Build release-candidate wheels and notices; publish only after review.
+1. Create `brendan-m-murphy/ty-scip`, push, and exercise hosted platform CI.
+2. Add the platform wheel matrix and resolve Windows output-replacement
+   semantics before claiming Windows support.
+3. Generate and review `THIRD_PARTY_NOTICES`, add PEP 639 license-file
+   metadata, and require license texts in every wheel.
+4. Build release-candidate wheels and publish only after the installed-wheel,
+   SCIP consumer, and frozen OpenGHG gates pass on the release artifacts.
+
+Create the public remote from the repository root with:
+
+```console
+gh repo create brendan-m-murphy/ty-scip \
+  --public \
+  --source=. \
+  --remote=origin \
+  --push \
+  --description "A fast SCIP indexer for Python, powered by ty"
+```
+
+Do not add `--add-readme`, `--gitignore`, or `--license`: the reviewed local
+history already contains those files, and `--source=.` plus `--push` publishes
+that history without generating a conflicting initial commit.
+
+## Implementation results
+
+- **2026-09-09:** Added the optional `index` command, `--output`, `--cwd`, and
+  `--quiet` while retaining the original 0.x shorthand. Added an explicit
+  migration guide and rejection tests for unsupported `scip-python` options.
+- **2026-09-09:** Corrected dotted import-module navigation to query ty at the
+  leaf component. Decoded SCIP tests cover `import pkg.deep.module` and
+  `from pkg.deep.module import target` without linking the module occurrence to
+  the root package.
+- **2026-09-09:** Added pinned Maturin 1.15.0 binary-wheel configuration with no
+  Python wrapper or runtime dependency. A clean environment installed the
+  9.5 MB macOS ARM64 wheel, ran `ty-scip 0.1.0`, and produced identical fixture
+  indexes at SHA-256
+  `7d864755dc2eafeda6aede793abb990ec1b56e7ef6a9bcb7c205205e5b453f2f`.
+- **2026-09-09:** Kept ty's ancestor project-discovery semantics intact and
+  marked independent test fixtures as projects after the root packaging file
+  made that boundary explicit. The full test, formatting, Clippy, release, and
+  Rust 1.96 minimum-version gates pass.
+- **2026-09-09:** The locally built wheel is a valid ABI-independent native
+  binary wheel and contains a CycloneDX SBOM, but it is not a PyPI release
+  candidate. It still needs PEP 639 license-file metadata, the project license
+  and reviewed third-party notices inside the artifact, hosted platform builds,
+  and release-CI provenance without workstation-local paths.

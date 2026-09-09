@@ -114,14 +114,14 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Adopt the staged [distribution plan](ty-scip-distribution.md) before creating
-the public remote. The existing Rust executable should be distributed through
-Maturin binary-only PyPI wheels, not a Python wrapper. First fix the dotted
-import-module regression found by differential OpenGHG analysis, then add the
-bounded `scip-python`-style CLI surface and platform release gates. A binary
-release additionally needs a generated and reviewed locked transitive notice
-bundle. Installed-package ownership, complete project-walk diagnostics, and
-method-override relationships stay upstream API requests. The remaining 39
+Create and push the public GitHub remote, then use its hosted CI to add the
+platform wheel matrix. The dotted-import correction, bounded
+`scip-python`-style CLI, and local Maturin binary-wheel smoke test are complete.
+The source repository is ready to publish; PyPI publication is not. A binary
+release additionally needs PEP 639 license-file metadata, a generated and
+reviewed locked transitive notice bundle, artifact license checks, and hosted
+platform gates. Installed-package ownership, complete project-walk diagnostics,
+and method-override relationships stay upstream API requests. The remaining 39
 first-party ambiguities stay unresolved until a typed bulk occurrence API can
 remove constructor/`__call__` expansion without a first-target heuristic.
 
@@ -403,3 +403,11 @@ remove constructor/`__call__` expansion without a first-target heuristic.
   distribution plan. Implementation started with the dotted-import correction,
   compatible CLI surface, and Maturin binary-wheel packaging before remote
   creation and hosted CI.
+- **2026-09-09:** Completed and committed the pre-remote implementation. Dotted
+  imports now resolve to their leaf module with decoded regressions; the CLI
+  accepts the common `scip-python index ... --output ...` shape; and a pinned
+  Maturin binary-only wheel installs and indexes deterministically in a clean
+  environment. Full tests, formatting, Clippy, release compilation, and the
+  Rust 1.96 minimum-version check pass. The repository is ready to push; wheel
+  license/notice contents and multi-platform release automation remain explicit
+  pre-PyPI work.
