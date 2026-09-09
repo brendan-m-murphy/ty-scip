@@ -392,10 +392,14 @@ remove constructor/`__call__` expansion without a first-target heuristic.
   import-module spans resolve to the root package instead of the specific
   imported module. The other six concern inherited or property-backed receiver
   attributes. Added the import regression to the first binary-release gate.
-- **2026-09-09:** Chose a binary-first packaging architecture. The recommendation
-  is to retain `ty-scip` for the repository, Cargo package, executable, PyPI
+- **2026-09-09:** Chose a binary-first packaging architecture. Retain `ty-scip`
+  for the repository, Cargo package, executable, PyPI
   distribution, and symbol scheme, with an explicit independent-project
   disclaimer. Publish the existing Rust executable through Maturin `bin`
   wheels; do not create a Python wrapper merely to reach PyPI. PyPI wheels and
   matching GitHub archives are the first release channels; crates.io, npm,
   Homebrew, containers, and a Python API remain demand-driven follow-ups.
+- **2026-09-09:** Brendan Murphy accepted the `ty-scip` identity and staged
+  distribution plan. Implementation started with the dotted-import correction,
+  compatible CLI surface, and Maturin binary-wheel packaging before remote
+  creation and hosted CI.

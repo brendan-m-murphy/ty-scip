@@ -1,6 +1,6 @@
 # ty-scip distribution plan
 
-Status: **Proposed; naming and release channel awaiting final confirmation**
+Status: **Accepted; implementation in progress**
 Started: 2026-09-09
 
 ## Goal
@@ -9,9 +9,9 @@ Make `ty-scip` straightforward to install and operate as an independent,
 community-maintained alternative to `scip-python`, without creating a second
 implementation or an unnecessary Python API.
 
-## Recommended identity
+## Public identity
 
-Retain `ty-scip` consistently for the repository, Cargo package, executable,
+Use `ty-scip` consistently for the repository, Cargo package, executable,
 PyPI distribution, and SCIP symbol scheme.
 
 - ty supplies the semantic engine; Ruff supplies the shared parser, database,
@@ -151,9 +151,8 @@ Before the first binary preview:
 
 ## Immediate sequence
 
-1. Confirm the `ty-scip` public identity before creating the remote.
-2. Fix and regression-test dotted import-module targets.
-3. Implement the bounded CLI compatibility surface.
-4. Add and locally smoke-test Maturin `bin` packaging.
-5. Create `brendan-m-murphy/ty-scip`, push, and exercise hosted platform CI.
-6. Build release-candidate wheels and notices; publish only after review.
+1. Fix and regression-test dotted import-module targets.
+2. Implement the bounded CLI compatibility surface.
+3. Add and locally smoke-test Maturin `bin` packaging.
+4. Create `brendan-m-murphy/ty-scip`, push, and exercise hosted platform CI.
+5. Build release-candidate wheels and notices; publish only after review.
