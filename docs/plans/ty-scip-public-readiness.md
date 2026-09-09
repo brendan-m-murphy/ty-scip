@@ -135,6 +135,13 @@ remove constructor/`__call__` expansion without a first-target heuristic.
 
 ## Progress log
 
+- **2026-09-09:** Activated hosted CI and added macOS/Windows core jobs while
+  keeping lint and MSRV checks on Linux. Windows first exposed a long Ruff
+  checkout path, then CRLF conversion of byte-offset fixtures; the fixes are a
+  Git long-path setting and repository-wide LF normalization. No
+  Windows-specific runtime dependency or output implementation was added, and
+  Windows remains optional for the first preview until the corrected job is
+  green.
 - **2026-09-09:** Completed the binary-license gate. A deterministic
   `cargo-about`-backed generator inventories the locked cross-platform graph
   and includes Ruff's complete inherited-code notice plus the Apache-licensed

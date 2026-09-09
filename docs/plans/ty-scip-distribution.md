@@ -178,6 +178,14 @@ that history without generating a conflicting initial commit.
 
 ## Implementation results
 
+- **2026-09-09:** Added hosted macOS and Windows core test/release-build jobs
+  without duplicating formatting, Clippy, or MSRV work. The first Windows run
+  exposed Git's default path limit while fetching Ruff; enabling long paths
+  allowed the full build to reach tests. That run then exposed CRLF checkout
+  drift in byte-offset fixtures, so `.gitattributes` now keeps repository text
+  at LF. Windows remains unclaimed until the corrected job passes; it is not a
+  first-preview blocker.
+
 - **2026-09-09:** Added the optional `index` command, `--output`, `--cwd`, and
   `--quiet` while retaining the original 0.x shorthand. Added an explicit
   migration guide and rejection tests for unsupported `scip-python` options.
