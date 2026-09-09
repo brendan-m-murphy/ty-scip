@@ -291,3 +291,10 @@ first-target heuristic.
   platform-independent invalid-byte fixture covers both absent and pre-existing
   outputs. Readable parser errors continue to use Ruff's recovered syntax tree
   and remain non-fatal.
+- **2026-09-09:** Extended source-faithful signature metadata to annotated
+  assignments and PEP 695 type aliases using two public AST ranges. Annotated
+  signatures deliberately stop before the right-hand side, avoiding large or
+  misleading value text; modern aliases preserve their complete declaration
+  and are classified as SCIP type aliases. Inferred signatures for ordinary
+  assignments and syntax-matched legacy aliases remain deferred because hover
+  is not a structured declaration API and can report definition-site literals.

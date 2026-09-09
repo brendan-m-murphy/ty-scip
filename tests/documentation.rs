@@ -51,6 +51,18 @@ fn emits_source_docs_and_deterministic_syntax_signatures() {
         symbol(document, "SETTING").documentation,
         ["Attribute documentation."]
     );
+    assert_eq!(
+        signature(symbol(document, "SETTING")),
+        Some(("python", "SETTING: int"))
+    );
+    assert_eq!(
+        signature(symbol(document, "Result")),
+        Some(("python", "type Result[T] = list[T]"))
+    );
+    assert_eq!(
+        symbol(document, "Result").kind.enum_value().unwrap(),
+        symbol_information::Kind::TypeAlias
+    );
 
     let example = symbol(document, "Example");
     assert_eq!(example.documentation, ["Class documentation."]);
@@ -101,7 +113,7 @@ fn emits_source_docs_and_deterministic_syntax_signatures() {
         Some(("python", "def inner(value: int) -> int"))
     );
     assert_eq!(
-        support::occurrence(document, &[51, 8, 13]).symbol,
+        support::occurrence(document, &[53, 8, 13]).symbol,
         inner.symbol
     );
 

@@ -43,7 +43,7 @@ plan.
 | Package identity | One first-party PEP 621 or explicit name/version for the whole index, plus configured-version `python-stdlib` identities | First-party, standard-library, and installed-distribution identities |
 | External links | Proven runtime standard-library symbols are emitted; typing-only and installed third-party targets are counted and omitted | Standard-library and third-party symbols can be emitted |
 | Occurrence roles | Definition, import, read, write, and augmented read/write | Definition and read |
-| Symbol information | Kind including semantically verified properties, display name, raw ty docstrings, source-faithful class/function signatures, and enclosing ranges | Emits rendered documentation and signatures through Pyright internals |
+| Symbol information | Kind including semantically verified properties and modern type aliases, display name, raw ty docstrings, source-faithful callable/class/annotated-assignment/type-alias signatures, and enclosing ranges | Emits rendered documentation and signatures through Pyright internals |
 | Inheritance and overrides | Direct first-party class bases are emitted as implementation relationships; inherited reads resolve | Emits class/implementation relationships, including richer internal cases |
 | Symbol scheme | `ty-scip`; intentionally not symbol-compatible | `scip-python` scheme |
 | SCIP ranges | SCIP 0.10 typed plus legacy fields | Legacy-consumer compatible |
@@ -135,7 +135,7 @@ blindly reimplemented:
 | `type_hierarchy_supertypes` | Direct base-class information | Used once per indexed class to emit first-party implementation relationships |
 | `goto_implementation` | Implementation targets | Not used: its reverse, per-cursor project scan is unsuitable for bulk override indexing |
 | `goto_type_definition` | Type targets for expressions | Explored, then deferred: per-definition cursor queries caused an unacceptable OpenGHG slowdown |
-| `hover` | Rendered signatures and documentation | Not parsed: raw public definition docstrings and Ruff-AST headers are emitted instead |
+| `hover` | Rendered signatures and documentation | Not parsed: raw public definition docstrings and source-faithful Ruff-AST declaration slices are emitted instead |
 | property/accessor and method-decorator inference plus semantic place tables | Distinguish properties and prove class-owned members | Property/accessor, receiver-semantics, and member-place evidence are used; transformed callables remain conservative |
 | module/dependency ownership | Basis for external package identities | Public search-path and configured-version evidence is used for the runtime standard library; installed distribution ownership/version still needs a complete public API |
 

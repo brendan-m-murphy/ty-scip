@@ -898,13 +898,18 @@ fn allocate_semantic_symbols<'db>(
                 signature.clone_from(preferred_signature);
             }
             let full_range = definition_full_ranges.get(&range).copied().unwrap_or(range);
+            let is_type_alias = signature
+                .as_deref()
+                .is_some_and(|signature| signature.starts_with("type "));
             let mut symbol = SymbolData {
                 full_range,
                 documentation,
                 signature,
                 ..symbol.clone()
             };
-            if property_metadata.is_some() {
+            if is_type_alias {
+                symbol.kind = DefinitionKind::TypeAlias;
+            } else if property_metadata.is_some() {
                 symbol.kind = DefinitionKind::Property;
             }
             if symbol.is_local() {
@@ -913,8 +918,11 @@ fn allocate_semantic_symbols<'db>(
                 globals
                     .entry(range)
                     .and_modify(|existing| {
-                        if symbol.kind == DefinitionKind::Property {
-                            existing.kind = DefinitionKind::Property;
+                        if matches!(
+                            symbol.kind,
+                            DefinitionKind::Property | DefinitionKind::TypeAlias
+                        ) {
+                            existing.kind = symbol.kind;
                         }
                         if existing.documentation.is_empty() {
                             existing.documentation.clone_from(&symbol.documentation);
@@ -976,6 +984,19 @@ fn definition_signature(
                 "class {}",
                 source_slice(source, TextRange::new(class.name.start(), end))
             ))
+        }
+        TyDefinitionKind::AnnotatedAssignment(definition) => Some(
+            source_slice(
+                source,
+                TextRange::new(
+                    definition.target(module).start(),
+                    definition.annotation(module).end(),
+                ),
+            )
+            .to_owned(),
+        ),
+        TyDefinitionKind::TypeAlias(definition) => {
+            Some(source_slice(source, definition.node(module).range()).to_owned())
         }
         _ => None,
     }

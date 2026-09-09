@@ -96,7 +96,8 @@ The current index includes:
 - direct first-party class-base implementation relationships;
 - SCIP definition, import, read, write, and augmented read/write roles, symbol
   kinds including semantically verified properties, display names, docstrings,
-  source-faithful class/function signatures, and enclosing ranges; and
+  source-faithful callable/class/annotated-assignment/type-alias signatures,
+  and enclosing ranges; and
 - both SCIP 0.10 typed ranges and equivalent legacy range fields.
 
 Missing semantic evidence is an omission, not a guessed link. Proven runtime
