@@ -437,3 +437,45 @@ fn truncation_and_source_snippets_are_deterministic() {
             .is_some_and(|text| text.contains("def run(self):") && text.contains("helper()"))
     }));
 }
+
+#[test]
+fn sqlite_cache_preserves_facts_and_groups_reference_occurrences() {
+    let fixture = Fixture::new();
+    let database = fixture.root.join("lossless.sqlite");
+    let database_text = database.to_str().unwrap();
+
+    let built = fixture.success(&["build-db", database_text]);
+    assert_eq!(built["result"]["documents"], 5);
+    assert_eq!(built["result"]["occurrences"], 15);
+    assert_eq!(built["result"]["relationships"], 1);
+
+    let stats = fixture.success(&["sql-stats", database_text]);
+    assert_eq!(stats["result"], built["result"]);
+
+    let refs = fixture.success(&[
+        "sql-refs",
+        database_text,
+        "pkg.Alpha#run",
+        "--outgoing",
+        "--path",
+        "pkg/",
+        "--limit",
+        "10",
+    ]);
+    let items = result_items(&refs);
+    let helper = items
+        .iter()
+        .find(|item| item["target"] == "pkg.helper")
+        .unwrap();
+    assert_eq!(helper["occurrences"], 2);
+    assert_eq!(helper["line"], 3);
+    assert_eq!(helper["low_signal"], false);
+    assert!(items.iter().any(|item| item["target"] == "pkg.leaf"));
+
+    let alpha = fixture.success(&["sql-refs", database_text, "pkg.Alpha", "--outgoing"]);
+    assert!(result_items(&alpha).iter().any(|item| {
+        item["target"] == "pkg.Base"
+            && item["relationship"]["is_implementation"] == true
+            && item["provenance"] == "scip_relationship"
+    }));
+}

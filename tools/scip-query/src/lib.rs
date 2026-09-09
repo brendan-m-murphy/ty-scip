@@ -15,6 +15,9 @@ use protobuf::{Enum, Message};
 use scip::types::{Index, Occurrence, PositionEncoding, SymbolInformation, SymbolRole, occurrence};
 use serde::Serialize;
 
+mod database;
+pub use database::{DatabaseStats, SqlDatabase, SqlReferencePage};
+
 /// Default cap used by composite responses such as [`QueryIndex::context`].
 pub const DEFAULT_LIMIT: usize = 100;
 const MAX_SNIPPET_LINES: usize = 12;

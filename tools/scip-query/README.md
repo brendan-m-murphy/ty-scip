@@ -1,9 +1,10 @@
 # scip-query
 
 `scip-query` is a small, lossless command-line navigator for SCIP indexes. It
-decodes the protobuf directly and builds only temporary lookup tables in memory:
-the `.scip` file remains the authority for documents, symbols, occurrences,
-roles, relationships, signatures, and documentation.
+can decode the protobuf directly or materialize a normalized SQLite cache. The
+`.scip` file remains the authority for documents, symbols, occurrences, roles,
+relationships, signatures, and documentation; the cache retains raw protobuf
+records alongside query columns instead of applying `scip-cli`'s pruning.
 
 Install it from the repository checkout:
 
@@ -37,6 +38,9 @@ scip-query --index INDEX.scip [--root PATH] [--limit N] refs SELECTOR [--incomin
 scip-query --index INDEX.scip [--root PATH] [--limit N] members SELECTOR
 scip-query --index INDEX.scip [--root PATH] [--limit N] path SOURCE TARGET [--max-depth N]
 scip-query --index INDEX.scip [--root PATH] [--limit N] affected SELECTOR [--max-depth N]
+scip-query --index INDEX.scip build-db DATABASE
+scip-query sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both] [--path PREFIX] [--offset N] [--limit N]
+scip-query sql-stats DATABASE
 ```
 
 Locations are one-based; columns are UTF-8 byte offsets, matching `rg
@@ -71,6 +75,14 @@ selectors include bounded suggestions.
 - `affected` traverses that graph's incoming edges to report a conservative
   change surface, retaining the predecessor edge and its evidence for each
   result. Neither command implies runtime calls.
+- `build-db` creates a new normalized SQLite cache and refuses to overwrite an
+  existing file. It preserves occurrence multiplicity and raw occurrence,
+  symbol-information, and relationship protobuf records.
+- `sql-refs` resolves symbols and queries the cache without decoding the full
+  index. It groups repeated occurrences with the same source, target, document,
+  roles, and provenance, reporting their count and first location. The direct
+  commands remain available for unmerged records and richer context.
+- `sql-stats` reports cache row counts for parity checks.
 
 For broad textual orientation, use `rg`, then hand an exact hit to SCIP rather
 than asking a natural-language graph query:
@@ -94,10 +106,9 @@ therefore reports occurrence-backed references and explicit SCIP relationships;
 it does not relabel references as calls. Producer-specific facts emitted by
 `ty-scip` can be joined later when their format and need are demonstrated.
 
-The initial tool intentionally has no SQLite cache, natural-language query
-layer, embedding index, or MCP server. Those can be added independently if
-profiling or agent trials show that direct protobuf queries and JSON output are
-insufficient.
+The tool intentionally has no natural-language query layer, embedding index, or
+MCP server. The SQLite cache is an optional performance layer rather than a
+replacement interchange format.
 
 Source snippets read through `--root` are marked unverified: the tool constrains
 reads to that root but does not yet prove that its files are the exact revision
