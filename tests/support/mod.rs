@@ -37,6 +37,13 @@ pub fn assert_index_integrity(index: &Index) {
         .iter()
         .map(|symbol| symbol.symbol.as_str())
         .collect();
+    let definition_symbols: HashSet<_> = index
+        .documents
+        .iter()
+        .flat_map(|document| &document.occurrences)
+        .filter(|occurrence| occurrence.symbol_roles & SymbolRole::Definition as i32 != 0)
+        .map(|occurrence| occurrence.symbol.as_str())
+        .collect();
     for document in &index.documents {
         let symbols: HashSet<_> = document
             .symbols
@@ -66,9 +73,10 @@ pub fn assert_index_integrity(index: &Index) {
         .flat_map(|symbol| &symbol.relationships)
     {
         assert!(
-            document_symbols.contains(relationship.symbol.as_str())
+            (document_symbols.contains(relationship.symbol.as_str())
+                && definition_symbols.contains(relationship.symbol.as_str()))
                 || external_symbols.contains(relationship.symbol.as_str()),
-            "relationship target {} has no symbol information",
+            "relationship target {} has no definition and symbol information",
             relationship.symbol
         );
     }
