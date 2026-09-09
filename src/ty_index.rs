@@ -45,7 +45,7 @@ pub(crate) struct IndexData {
 }
 
 #[derive(Default)]
-struct IdentifierRanges(Vec<TextRange>);
+struct IdentifierRanges(Vec<(TextRange, bool)>);
 
 #[derive(Default)]
 struct OccurrenceRoles(HashMap<TextRange, i32>);
@@ -138,14 +138,22 @@ impl<'ast> SourceOrderVisitor<'ast> for OccurrenceRoles {
 
 impl<'ast> SourceOrderVisitor<'ast> for IdentifierRanges {
     fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
-        if let AnyNodeRef::ExprName(name) = node {
-            self.0.push(name.range());
+        match node {
+            AnyNodeRef::ExprName(name) => self.0.push((name.range(), true)),
+            AnyNodeRef::ExprSubscript(subscript) => {
+                if let Expr::StringLiteral(string) = subscript.slice.as_ref()
+                    && let Some(string) = string.as_single_part_string()
+                {
+                    self.0.push((string.content_range(), false));
+                }
+            }
+            _ => {}
         }
         TraversalSignal::Traverse
     }
 
     fn visit_identifier(&mut self, identifier: &'ast Identifier) {
-        self.0.push(identifier.range());
+        self.0.push((identifier.range(), true));
     }
 }
 
@@ -377,7 +385,7 @@ pub(crate) fn index(
             visitor.0
         };
 
-        for range in ranges {
+        for (range, report_unresolved) in ranges {
             let mut targets = ty_ide::goto_declaration(&db, program_file, range.start())
                 .into_iter()
                 .flat_map(|result| result.value)
@@ -476,6 +484,9 @@ pub(crate) fn index(
             }
             match targets.as_slice() {
                 [] => {
+                    if !report_unresolved {
+                        continue;
+                    }
                     unresolved += 1;
                     if unresolved_samples < sample_limit {
                         samples.push(format!(
