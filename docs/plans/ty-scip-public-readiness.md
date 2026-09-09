@@ -337,3 +337,7 @@ first-target heuristic.
   needs the locked transitive license texts and notices assembled and checked.
   `cargo package --list` succeeds but correctly warns that project license and
   repository metadata are absent.
+- **2026-09-09:** Installed the declared minimum Rust 1.96.0 toolchain and
+  completed `cargo +1.96.0 check --locked --all-targets` successfully. The
+  source release is therefore verified on both its declared minimum and the
+  pinned 1.98.1 development toolchain; CI carries the same MSRV check.
