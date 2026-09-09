@@ -115,5 +115,13 @@ fn invalid_utf8_source_fails_without_writing_an_index() {
     assert!(stderr.contains("cannot read project file"), "{stderr}");
     assert!(stderr.contains("main.py"), "{stderr}");
     assert!(!output.exists());
+
+    fs::write(&output, b"existing index").expect("write existing output");
+    let repeated = run(&root, &output);
+    assert!(!repeated.status.success());
+    assert_eq!(
+        fs::read(&output).expect("read preserved output"),
+        b"existing index"
+    );
     fs::remove_dir_all(root).expect("remove project");
 }

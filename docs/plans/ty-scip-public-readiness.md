@@ -287,6 +287,7 @@ first-target heuristic.
   guessing would produce false package identities.
 - **2026-09-09:** Made selected-source read failures fatal before SCIP emission.
   Invalid UTF-8 and other `SourceText` read errors now name the affected file,
-  exit unsuccessfully, and leave no output index; a platform-independent
-  invalid-byte fixture covers the policy. Readable parser errors continue to
-  use Ruff's recovered syntax tree and remain non-fatal.
+  exit unsuccessfully, and neither create nor replace the output path; a
+  platform-independent invalid-byte fixture covers both absent and pre-existing
+  outputs. Readable parser errors continue to use Ruff's recovered syntax tree
+  and remain non-fatal.
