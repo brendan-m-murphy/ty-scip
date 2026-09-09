@@ -311,3 +311,29 @@ first-target heuristic.
   symlinks are not traversed. Project-walk diagnostics remain a private ty API,
   so a complete-index guarantee requires an upstream visibility change rather
   than a duplicate filesystem walker.
+- **2026-09-09:** Passed the post-expansion frozen OpenGHG gate at commit
+  `3d8aa2b`: 281 files, 22,975 definitions, 51,587 references, 9,754
+  unresolved, 39 ambiguous, 1,860 external omissions, and three safely skipped
+  cross-file locals. Two release runs produced identical 6.7 MB indexes with
+  SHA-256 `343c87e75c010ad283c9cc47dcd8aa45fbed9c6301cb1769fb80c3e707f5af4a`.
+  A decoded audit found zero definitions without same-document symbol
+  information, zero missing relationship targets, and zero standard-library
+  occurrences without external symbol information. The SCIP 0.8 linter still
+  reported its known varying subset of valid cross-document relationship
+  targets.
+- **2026-09-09:** Converted that index through a fresh isolated `scip-cli`
+  2.7.0 cache: 281 documents, 534 chunks, 19,273 mentions, 7,149 definition
+  ranges, and 6,585 global symbols. `ModelScenario` search/code/members,
+  vectorized and legacy operator references, `_scenario.py` dependencies, and
+  reverse dependencies all returned the expected relationships. This is a
+  structural-coverage gate, not an agent-efficiency claim; the prior benchmark
+  remained 34% higher in total tokens, 6.5% higher in uncached input, and 2%
+  slower than built-in search.
+- **2026-09-09:** Inspected the complete locked Cargo graph for source-release
+  licensing: all 255 dependencies report SPDX license expressions, including
+  three MPL-2.0 packages and the Ruff/ty MIT workspace. This is evidence for a
+  future notice bundle, not the bundle itself. Public redistribution remains
+  blocked on the project's license/copyright choice; binary distribution also
+  needs the locked transitive license texts and notices assembled and checked.
+  `cargo package --list` succeeds but correctly warns that project license and
+  repository metadata are absent.

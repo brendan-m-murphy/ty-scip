@@ -32,7 +32,7 @@ plan.
 
 | Area | `ty-scip` now | `scip-python` comparison |
 | --- | --- | --- |
-| Project files | ty-selected first-party `.py` and `.pyi` files, including namespace packages and configured excludes | Supported through Pyright's project model |
+| Project files | ty-selected first-party `.py` and `.pyi` files, including namespace packages and configured excludes; file symlinks are selected but directory symlinks are not traversed | Supported through Pyright's project model, including directory symlinks |
 | Global definitions | Modules, classes, functions, methods, constructors, variables, constants, properties, fields, and type parameters | Broadly supported |
 | Callable parameters | Stable global symbols beneath named callables | Supported, including Pyright's deeper callable model |
 | Local definitions | Deterministic semantic bindings, including unused and repeated definitions | Broadly supported, including nested constructs |
@@ -142,7 +142,9 @@ blindly reimplemented:
 The most valuable upstream addition would be a stable bulk resolved-occurrence
 API carrying exact ranges, roles, canonical targets, aliases, ownership,
 signatures, and documentation. Until then, `ty-scip` keeps ty/Ruff coupling in
-one module and avoids copying analyzer logic or maintaining a fork.
+one module and avoids copying analyzer logic or maintaining a fork. The
+concrete remaining seams and conservative interim decisions are listed in
+[candidate upstream ty APIs](upstream-ty-api-requests.md).
 
 ## Platform and release limits
 

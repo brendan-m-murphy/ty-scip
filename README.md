@@ -126,14 +126,15 @@ larger OpenGHG index; every reported target has symbol information and a
 definition occurrence, and the error set changes between runs of identical
 bytes.
 
-On the frozen 281-document OpenGHG checkout, four release-mode runs with the
-same project produced byte-identical indexes, including when written to
-different output paths. Index replacement uses an exclusively created sibling
-temporary file followed by an atomic rename. An earlier benchmarked
-revision indexed in 1.29 seconds and converted to 464 chunks and 15,999
-mentions. Two planning tasks produced accurate scopes and 24/24 valid cited
-locations, but this arm did not beat built-in search: it used about 34% more
-total tokens, 6.5% more uncached input, and 2% more elapsed time. These results
+On the frozen 281-document OpenGHG checkout, repeated release-mode runs with
+the same project produced byte-identical indexes, including when written to
+different output paths. The latest index converted to 534 chunks and 19,273
+mentions and passed the isolated `scip-cli` search, code, members, references,
+dependencies, and reverse-dependencies gate. Index replacement uses an
+exclusively created sibling temporary file followed by an atomic rename. Two
+planning tasks produced accurate scopes and 24/24 valid cited locations, but
+the benchmarked arm did not beat built-in search: it used about 34% more total
+tokens, 6.5% more uncached input, and 2% more elapsed time. These results
 support `ty-scip` as a fast structural-navigation backend, not an agent
 efficiency claim.
 
@@ -151,3 +152,5 @@ cargo build --release --locked
 Semantic changes need a decoded-SCIP regression that proves both the desired
 link and the relevant false-link case. Before changing the Ruff pin, follow
 the update checklist in [compatibility and limitations](docs/compatibility.md).
+The remaining analyzer seams are recorded as narrow
+[candidate upstream ty APIs](docs/upstream-ty-api-requests.md).
