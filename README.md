@@ -99,10 +99,12 @@ The current index includes:
   source-faithful class/function signatures, and enclosing ranges; and
 - both SCIP 0.10 typed ranges and equivalent legacy range fields.
 
-Missing semantic evidence is an omission, not a guessed link. Standard-library
-and third-party targets are counted as external but are not emitted. Distinct
-multi-target results remain ambiguous, document-local identities are not
-linked across files, and transformed-method receiver attributes are skipped.
+Missing semantic evidence is an omission, not a guessed link. Proven runtime
+standard-library targets use a `python-stdlib` package identity with ty's
+configured Python major/minor version. Typing-only and installed third-party
+targets remain counted omissions. Distinct multi-target results remain
+ambiguous, document-local identities are not linked across files, and
+transformed-method receiver attributes are skipped.
 
 See [compatibility and limitations](docs/compatibility.md) for the detailed
 feature matrix and the ty APIs evaluated for future work.

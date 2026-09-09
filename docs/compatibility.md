@@ -40,8 +40,8 @@ plan.
 | Overloads and repeated definitions | Co-definitions normalize when they resolve to one durable symbol | Supported through Pyright declaration identity |
 | Instance attributes | Promoted when ty proves a receiver attribute in a direct method with normal inferred receiver semantics, including identity-preserving decorators; inherited reads resolve | Broader handling through Pyright's class/member model |
 | Imports and aliases | Relative, aliased, dotted, submodule, and `__init__.py` re-export targets when unambiguous; dynamic/wildcard edge cases are not claimed | More mature import, alias, and re-export handling |
-| Package identity | One first-party PEP 621 or explicit name/version for the whole index | First-party, standard-library, and installed-distribution identities |
-| External links | Counted and omitted | Standard-library and third-party symbols can be emitted |
+| Package identity | One first-party PEP 621 or explicit name/version for the whole index, plus configured-version `python-stdlib` identities | First-party, standard-library, and installed-distribution identities |
+| External links | Proven runtime standard-library symbols are emitted; typing-only and installed third-party targets are counted and omitted | Standard-library and third-party symbols can be emitted |
 | Occurrence roles | Definition, import, read, write, and augmented read/write | Definition and read |
 | Symbol information | Kind including semantically verified properties, display name, raw ty docstrings, source-faithful class/function signatures, and enclosing ranges | Emits rendered documentation and signatures through Pyright internals |
 | Inheritance and overrides | Direct first-party class bases are emitted as implementation relationships; inherited reads resolve | Emits class/implementation relationships, including richer internal cases |
@@ -69,8 +69,10 @@ Package identity precedence is:
 2. static PEP 621 `[project].name` and `[project].version`; then
 3. an empty value.
 
-Dynamic versions are not executed or imported. Multi-distribution monorepos,
-editable-install ownership, standard-library version identity, and installed
+Dynamic versions are not executed or imported. A module that ty proves belongs
+to the runtime standard library uses `python-stdlib` and ty's configured Python
+major/minor version; typing-only modules such as `_typeshed` are excluded.
+Multi-distribution monorepos, editable-install ownership, and installed
 distribution ownership are not implemented.
 
 Named nested functions and classes use stable lexical global symbols. Other
@@ -97,7 +99,7 @@ better.
 
 Known conservative omissions include:
 
-- standard-library and third-party links;
+- installed third-party and typing-only external links;
 - receiver attributes in class/static/property methods or decorators that
   replace the function, where a `self`/`cls` assumption would be false;
 - genuinely dynamic attributes and imports;
@@ -135,7 +137,7 @@ blindly reimplemented:
 | `goto_type_definition` | Type targets for expressions | Explored, then deferred: per-definition cursor queries caused an unacceptable OpenGHG slowdown |
 | `hover` | Rendered signatures and documentation | Not parsed: raw public definition docstrings and Ruff-AST headers are emitted instead |
 | property/accessor and method-decorator inference plus semantic place tables | Distinguish properties and prove class-owned members | Property/accessor, receiver-semantics, and member-place evidence are used; transformed callables remain conservative |
-| module/dependency ownership | Basis for external package identities | Deferred until distribution and standard-library identities are trustworthy |
+| module/dependency ownership | Basis for external package identities | Public search-path and configured-version evidence is used for the runtime standard library; installed distribution ownership/version still needs a complete public API |
 
 The most valuable upstream addition would be a stable bulk resolved-occurrence
 API carrying exact ranges, roles, canonical targets, aliases, ownership,

@@ -274,3 +274,13 @@ a first-target heuristic.
   identity-preserving generic decorator now retains durable instance-member
   links, while static methods, class methods, properties, and a decorator that
   replaces the function remain negative cases. No decorator name is trusted.
+- **2026-09-09:** Emitted external symbol information and occurrences for
+  runtime standard-library modules proven by ty, using `python-stdlib` and the
+  configured Python major/minor version; typing-only `_typeshed` symbols stay
+  omitted. On frozen OpenGHG, references increased from 41,229 to 51,581 and
+  counted external omissions fell from 12,212 to 1,860, with a 1.30-second warm
+  run and byte-identical repeated output. A decoded audit found no emitted
+  standard-library occurrence without matching external symbol information.
+  Installed third-party symbols remain deferred because the public API does
+  not expose complete distribution ownership and version evidence; import-name
+  guessing would produce false package identities.
