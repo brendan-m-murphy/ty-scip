@@ -39,6 +39,21 @@ jobs:
       - run: cargo +1.96.0 check --locked --all-targets
       - run: cargo +1.96.0 check --locked --manifest-path tools/scip-graphify/Cargo.toml --all-targets
 
+  platform:
+    name: Core (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - run: cargo test --locked --all-targets
+      - run: cargo build --release --locked
+
   scip-graphify:
     runs-on: ubuntu-latest
     steps:
