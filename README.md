@@ -23,7 +23,8 @@ the `ty-scip` symbol scheme may still change.
 
 The project is MIT licensed. There is no supported binary or crates.io
 distribution yet; the pinned ty/Ruff crates are unpublished, so build the
-current GitHub checkout to evaluate it.
+current GitHub checkout to evaluate it. Binary packages include the project
+license and the generated [third-party notices](THIRD_PARTY_NOTICES).
 
 ## Build
 
@@ -172,6 +173,26 @@ cargo test --locked
 cargo build --release --locked
 ```
 
+When `Cargo.lock` or the Ruff pin changes, install the pinned maintenance tool
+and regenerate the reviewed third-party notice bundle:
+
+```console
+cargo install cargo-about --locked --version 0.9.2 --features cli
+python scripts/licenses.py
+python scripts/licenses.py --check
+```
+
+To validate the actual binary-wheel contents and installed command:
+
+```console
+python -m pip install maturin==1.15.0
+maturin build --release --locked
+python scripts/check_wheel.py target/wheels/*.whl
+```
+
+These Python scripts are packaging checks, not a Python wrapper or runtime
+dependency of `ty-scip`.
+
 Semantic changes need a decoded-SCIP regression that proves both the desired
 link and the relevant false-link case. Before changing the Ruff pin, follow
 the update checklist in [compatibility and limitations](docs/compatibility.md).
@@ -181,3 +202,5 @@ The remaining analyzer seams are recorded as narrow
 ## License
 
 Copyright 2026 Brendan Murphy. Released under the [MIT License](LICENSE).
+Binary distributions also carry the generated
+[third-party notices](THIRD_PARTY_NOTICES).

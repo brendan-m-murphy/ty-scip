@@ -1,6 +1,6 @@
 # ty-scip distribution plan
 
-Status: **Local packaging proved; ready for public remote and hosted CI**
+Status: **License-complete local wheel proved; hosted platform CI next**
 Started: 2026-09-09
 
 ## Goal
@@ -154,9 +154,7 @@ Before the first binary preview:
 1. Create `brendan-m-murphy/ty-scip`, push, and exercise hosted platform CI.
 2. Add the platform wheel matrix and resolve Windows output-replacement
    semantics before claiming Windows support.
-3. Generate and review `THIRD_PARTY_NOTICES`, add PEP 639 license-file
-   metadata, and require license texts in every wheel.
-4. Build release-candidate wheels and publish only after the installed-wheel,
+3. Build release-candidate wheels and publish only after the installed-wheel,
    SCIP consumer, and frozen OpenGHG gates pass on the release artifacts.
 
 Create the public remote from the repository root with:
@@ -193,7 +191,10 @@ that history without generating a conflicting initial commit.
   made that boundary explicit. The full test, formatting, Clippy, release, and
   Rust 1.96 minimum-version gates pass.
 - **2026-09-09:** The locally built wheel is a valid ABI-independent native
-  binary wheel and contains a CycloneDX SBOM, but it is not a PyPI release
-  candidate. It still needs PEP 639 license-file metadata, the project license
-  and reviewed third-party notices inside the artifact, hosted platform builds,
-  and release-CI provenance without workstation-local paths.
+  binary wheel. Added PEP 639 metadata and a deterministic notice generator
+  covering the locked target matrix, Ruff's full inherited-code notices, and
+  embedded typeshed. The wheel contains `LICENSE` and
+  `THIRD_PARTY_NOTICES`, installs in an isolated environment, and reports the
+  Cargo-sourced version. Disabled Maturin's optional path-bearing SBOM until it
+  can represent the root package without workstation-local provenance. Hosted
+  platform builds and the release-candidate SCIP gates remain.
