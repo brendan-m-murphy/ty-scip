@@ -243,3 +243,34 @@ a first-target heuristic.
   Unicode URI characters, replacement of existing output, failure cleanup,
   and absence of temporary residue. Two OpenGHG runs targeting different paths
   produced the same SHA-256.
+- **2026-09-09:** Parser errors and unsupported-syntax errors are now counted
+  through Ruff's recovered parse result. A malformed file still contributes
+  valid definitions and references before and after its error, produces a
+  deterministic index, and exits successfully with an explicit diagnostic
+  count. Unreadable-file and project-walk diagnostics remain separate failure
+  policy work because ty's walker diagnostics are not public.
+- **2026-09-09:** Added decoded coverage for relative, aliased, dotted,
+  submodule, and package re-export imports; dataclass-generated constructor
+  fields; parallel source/stub and stub-only modules; configured excludes; and
+  PEP 420 namespace packages. These were existing ty capabilities rather than
+  new adapter logic. Every decoded fixture now verifies that global definitions
+  have same-document symbol information and relationship targets have both
+  symbol information and a definition occurrence.
+- **2026-09-09:** Used the public ty semantic model to classify property
+  getter/setter groups as SCIP properties and deterministically retain getter
+  documentation/signature metadata. Ordinary, static, and custom-decorated
+  functions remain non-properties. Added TypedDict string-subscript queries to
+  the existing navigation path; declared keys link over the inner string value,
+  while ordinary dictionary keys remain absent and do not inflate unresolved
+  counters. OpenGHG stayed byte-identical across runs, retained the baseline
+  9,754 unresolved queries, and indexed in 1.29 seconds warm.
+- **2026-09-09:** Added a minimal locked GitHub Actions workflow for formatting,
+  Clippy, tests, release build, and an explicit Rust 1.96 compile check. Local
+  checkout installation with `cargo install --locked --path .` is documented
+  and verified. A project license/copyright choice and repository URL remain
+  user decisions; binary release automation remains deliberately absent.
+- **2026-09-09:** Replaced the blanket undecorated-method receiver gate with
+  ty's inferred `FunctionLiteral` and `MethodDecorator` evidence. An
+  identity-preserving generic decorator now retains durable instance-member
+  links, while static methods, class methods, properties, and a decorator that
+  replaces the function remain negative cases. No decorator name is trusted.

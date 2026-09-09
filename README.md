@@ -65,9 +65,10 @@ Options:
 - `-V`, `--version`: print the version.
 
 Normal output is quiet on stdout. A summary of indexed definitions,
-references, unresolved and ambiguous queries, external targets, and safely
-skipped links is written to stderr. Set `TY_SCIP_SAMPLE_LIMIT=N` to include up
-to `N` deterministic examples from each unresolved and ambiguous category.
+references, unresolved and ambiguous queries, external targets, safely skipped
+links, and parser diagnostics is written to stderr. Set
+`TY_SCIP_SAMPLE_LIMIT=N` to include up to `N` deterministic examples from each
+unresolved and ambiguous category.
 
 Project discovery, source selection, import resolution, and Python-environment
 behavior come from ty. Configure them with `ty.toml` or `[tool.ty]` in
@@ -85,31 +86,37 @@ The current index includes:
 - unambiguous first-party name, attribute, import, re-export, and keyword
   references;
 - normalization of overloads and repeated definitions that denote one binding;
+- generated dataclass/NamedTuple/TypedDict constructor fields and TypedDict
+  string-key reads when ty resolves them to declared fields;
 - stable lexical symbols for named nested functions and classes while anonymous
   and ordinary function-local bindings remain document-local;
 - class-member identities for instance attributes that ty proves belong to a
-  direct, undecorated method's class, including inherited reads;
+  direct method whose inferred callable semantics preserve normal receiver
+  behavior, including inherited reads and safe decorated methods;
 - direct first-party class-base implementation relationships;
 - SCIP definition, import, read, write, and augmented read/write roles, symbol
-  kinds, display names, docstrings, source-faithful class/function signatures,
-  and enclosing ranges; and
+  kinds including semantically verified properties, display names, docstrings,
+  source-faithful class/function signatures, and enclosing ranges; and
 - both SCIP 0.10 typed ranges and equivalent legacy range fields.
 
 Missing semantic evidence is an omission, not a guessed link. Standard-library
 and third-party targets are counted as external but are not emitted. Distinct
 multi-target results remain ambiguous, document-local identities are not
-linked across files, and decorated-method receiver attributes are currently
-skipped.
+linked across files, and transformed-method receiver attributes are skipped.
 
 See [compatibility and limitations](docs/compatibility.md) for the detailed
 feature matrix and the ty APIs evaluated for future work.
 
 ## Compatibility and evidence
 
-The dual range encoding passes SCIP 0.10 lint and supports the SCIP 0.8-based
-conversion path used by `scip-cli` 2.7.0. Compatibility is tested at the query
-layer because protobuf validity alone does not prove that converted mentions
-survive.
+The dual range encoding passes SCIP 0.10 lint on the focused fixtures and
+supports the SCIP 0.8-based conversion path used by `scip-cli` 2.7.0.
+Compatibility is tested at the query layer because protobuf validity alone
+does not prove that converted mentions survive. Both tested linter versions
+intermittently misreport valid cross-document relationship targets on the
+larger OpenGHG index; every reported target has symbol information and a
+definition occurrence, and the error set changes between runs of identical
+bytes.
 
 On the frozen 281-document OpenGHG checkout, four release-mode runs with the
 same project produced byte-identical indexes, including when written to

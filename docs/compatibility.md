@@ -12,11 +12,15 @@ Every occurrence contains both forms of its range:
 - the deprecated integer `range` and `enclosing_range` fields consumed by
   older tooling.
 
-This output passes the SCIP 0.10 linter and has been exercised through the
+Focused indexes pass the SCIP 0.10 linter and have been exercised through the
 SCIP 0.8.1-based conversion path in `scip-cli` 2.7.0. The acceptance gate uses
 a fresh conversion database and checks non-zero chunks and mentions plus
-search, members, references, and dependency queries. Supporting consumers
-older than that tested path is not currently a goal.
+search, members, references, and dependency queries. Both linter versions
+intermittently misreport valid cross-document relationship targets on the
+larger OpenGHG index; decoded integrity checks prove those targets have symbol
+information and definition occurrences, and repeated lint runs over identical
+bytes report different subsets. Supporting consumers older than the tested
+conversion path is not currently a goal.
 
 Ranges use UTF-8 byte offsets and Ruff's universal-newline line index. Tests
 cover LF, CRLF, lone CR, and multibyte text.
@@ -28,22 +32,22 @@ plan.
 
 | Area | `ty-scip` now | `scip-python` comparison |
 | --- | --- | --- |
-| Project files | ty-selected first-party `.py` and `.pyi` files | Supported through Pyright's project model |
+| Project files | ty-selected first-party `.py` and `.pyi` files, including namespace packages and configured excludes | Supported through Pyright's project model |
 | Global definitions | Modules, classes, functions, methods, constructors, variables, constants, properties, fields, and type parameters | Broadly supported |
 | Callable parameters | Stable global symbols beneath named callables | Supported, including Pyright's deeper callable model |
 | Local definitions | Deterministic semantic bindings, including unused and repeated definitions | Broadly supported, including nested constructs |
 | First-party references | Unambiguous names, attributes, imports, re-exports, and keyword arguments | Broadly supported |
 | Overloads and repeated definitions | Co-definitions normalize when they resolve to one durable symbol | Supported through Pyright declaration identity |
-| Instance attributes | Promoted only when ty proves a receiver attribute in a direct undecorated method belongs to the class; inherited reads resolve | Broader handling through Pyright's class/member model |
-| Imports and aliases | Unambiguous first-party targets; dynamic/wildcard edge cases are not yet claimed | More mature import, alias, and re-export handling |
+| Instance attributes | Promoted when ty proves a receiver attribute in a direct method with normal inferred receiver semantics, including identity-preserving decorators; inherited reads resolve | Broader handling through Pyright's class/member model |
+| Imports and aliases | Relative, aliased, dotted, submodule, and `__init__.py` re-export targets when unambiguous; dynamic/wildcard edge cases are not claimed | More mature import, alias, and re-export handling |
 | Package identity | One first-party PEP 621 or explicit name/version for the whole index | First-party, standard-library, and installed-distribution identities |
 | External links | Counted and omitted | Standard-library and third-party symbols can be emitted |
 | Occurrence roles | Definition, import, read, write, and augmented read/write | Definition and read |
-| Symbol information | Kind, display name, raw ty docstrings, source-faithful class/function signatures, and enclosing ranges | Emits rendered documentation and signatures through Pyright internals |
+| Symbol information | Kind including semantically verified properties, display name, raw ty docstrings, source-faithful class/function signatures, and enclosing ranges | Emits rendered documentation and signatures through Pyright internals |
 | Inheritance and overrides | Direct first-party class bases are emitted as implementation relationships; inherited reads resolve | Emits class/implementation relationships, including richer internal cases |
 | Symbol scheme | `ty-scip`; intentionally not symbol-compatible | `scip-python` scheme |
 | SCIP ranges | SCIP 0.10 typed plus legacy fields | Legacy-consumer compatible |
-| Diagnostics and notebooks | Not emitted | Not emitted; not a parity blocker |
+| Diagnostics and notebooks | Parser diagnostic counts are reported; recovered syntax is indexed; no SCIP diagnostics/notebooks | No SCIP diagnostics/notebooks; not a parity blocker |
 
 `ty-scip` preallocates user-visible semantic definitions before reference
 resolution. This includes locals, imports, parameters, comprehensions,
@@ -94,8 +98,8 @@ better.
 Known conservative omissions include:
 
 - standard-library and third-party links;
-- receiver attributes in decorated methods, where a simple `self`/`cls`
-  assumption could misclassify static methods or transformed callables;
+- receiver attributes in class/static/property methods or decorators that
+  replace the function, where a `self`/`cls` assumption would be false;
 - genuinely dynamic attributes and imports;
 - string references such as string annotations, pytest fixture names, and
   `__slots__` entries;
@@ -105,6 +109,13 @@ Known conservative omissions include:
   parameter docs, stub-to-source doc fallback, diagnostics, and call hierarchy;
   and
 - exact `scip-python` symbol compatibility.
+
+Both source and stub documents are indexed when ty selects a parallel `.py` and
+`.pyi`. Corresponding declarations share a durable symbol identity, while call
+signatures and keyword targets follow the selected stub contract. Stub-only
+modules are also supported. A future source-navigation policy may add explicit
+stub-to-implementation relationships; it will not replace declaration identity
+by default.
 
 ## Evaluated ty/Ruff API surface
 
@@ -123,7 +134,7 @@ blindly reimplemented:
 | `goto_implementation` | Implementation targets | Not used: its reverse, per-cursor project scan is unsuitable for bulk override indexing |
 | `goto_type_definition` | Type targets for expressions | Explored, then deferred: per-definition cursor queries caused an unacceptable OpenGHG slowdown |
 | `hover` | Rendered signatures and documentation | Not parsed: raw public definition docstrings and Ruff-AST headers are emitted instead |
-| method decorators and semantic place tables | Distinguish and prove class-owned members | Place evidence is used; decorated methods remain gated until receiver behavior is proven |
+| property/accessor and method-decorator inference plus semantic place tables | Distinguish properties and prove class-owned members | Property/accessor, receiver-semantics, and member-place evidence are used; transformed callables remain conservative |
 | module/dependency ownership | Basis for external package identities | Deferred until distribution and standard-library identities are trustworthy |
 
 The most valuable upstream addition would be a stable bulk resolved-occurrence
