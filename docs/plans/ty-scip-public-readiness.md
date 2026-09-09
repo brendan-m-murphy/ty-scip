@@ -411,3 +411,15 @@ remove constructor/`__call__` expansion without a first-target heuristic.
   Rust 1.96 minimum-version check pass. The repository is ready to push; wheel
   license/notice contents and multi-platform release automation remain explicit
   pre-PyPI work.
+- **2026-09-09:** Repeated the frozen OpenGHG differential and consumer gates
+  after the dotted-import fix. Compared by document, occurrence range, and
+  projected target definition, disjoint shared first-party targets fell from
+  600 to six; all 594 dotted-import mismatches are gone, leaving only the
+  previously identified property/inherited-receiver cases. Two runs indexed
+  281 files with 22,975 definitions and 53,264 references in 2.09 and 1.64
+  seconds and produced byte-identical 7,070,030-byte indexes. The isolated
+  `scip-cli` 2.7 search, members, legacy and vectorized references,
+  dependencies, and reverse-dependencies gate passed with 542 chunks and
+  20,586 mentions. SCIP's known intermittent cross-document-relationship lint
+  report remains a consumer defect: decoded audit found all 57 relationship
+  targets and all definitions present in symbol metadata.

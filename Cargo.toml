@@ -1,7 +1,7 @@
 [package]
 name = "ty-scip"
 version = "0.1.0"
-description = "A SCIP indexer for Python built on ty and Ruff"
+description = "A fast SCIP indexer for Python, powered by ty"
 authors = ["Brendan Murphy"]
 license = "MIT"
 readme = "README.md"

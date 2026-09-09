@@ -1,8 +1,13 @@
 # ty-scip
 
+**A fast SCIP indexer for Python, powered by ty.**
+
 `ty-scip` is an experimental SCIP indexer for Python. It turns ty's Python
 project model and semantic navigation results into a deterministic index that
 is tested with SCIP 0.10 and the SCIP 0.8-based `scip-cli` 2.7 conversion path.
+
+This is an independent project. It is not affiliated with or endorsed by
+Astral or Sourcegraph.
 
 The indexer is written in Rust because ty and Ruff expose the required parser,
 project, and semantic APIs as Rust crates. `ty-scip` consumes those crates
