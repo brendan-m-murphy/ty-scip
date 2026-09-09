@@ -33,7 +33,7 @@ argument for convenient one-off use.
 scip-query --index INDEX.scip [--root PATH] [--limit N] find QUERY [--path PATH]
 scip-query --index INDEX.scip [--root PATH] [--limit N] at PATH:LINE[:COLUMN]
 scip-query --index INDEX.scip [--root PATH] [--limit N] context SELECTOR
-scip-query --index INDEX.scip [--root PATH] [--limit N] refs SELECTOR [--incoming|--outgoing|--both]
+scip-query --index INDEX.scip [--root PATH] [--limit N] refs SELECTOR [--incoming|--outgoing|--both] [--path PREFIX] [--compact] [--offset N]
 scip-query --index INDEX.scip [--root PATH] [--limit N] members SELECTOR
 scip-query --index INDEX.scip [--root PATH] [--limit N] path SOURCE TARGET [--max-depth N]
 scip-query --index INDEX.scip [--root PATH] [--limit N] affected SELECTOR [--max-depth N]
@@ -46,7 +46,9 @@ path-qualified name such as `openghg/store/_flux.py:Flux.transform_data`.
 Unqualified names are convenient for discovery, but the tool never chooses an
 arbitrary match: an ambiguous selector returns a structured non-success result
 with candidates that can be used to refine the next request. Exact selectors
-that are ambiguous or absent emit JSON and exit with status 2.
+that are ambiguous or absent emit JSON and exit with status 2. The common
+`Class#method` shorthand is accepted as an alias for `Class.method`; unresolved
+selectors include bounded suggestions.
 
 - `find` searches symbol names and SCIP metadata.
 - `at` resolves an `rg` location to semantic occurrences. A line-only
@@ -58,7 +60,10 @@ that are ambiguous or absent emit JSON and exit with status 2.
   explicitly. Index-supplied project roots are not trusted as read authority.
 - `refs` returns exact occurrence-backed incoming references, outgoing
   references found inside a definition, explicit SCIP relationships, or both
-  (the default).
+  (the default). `--path tests/` restricts occurrence evidence by path prefix,
+  `--compact` returns only agent-facing symbol/location/role evidence, and
+  `--offset` pages through a bounded result without changing the lossless
+  default representation.
 - `members` returns definition occurrences owned by SCIP enclosing-symbol or
   lexical-range evidence; metadata-only children have no definition to return.
 - `path` finds a bounded path through occurrence-backed reference and explicit
@@ -74,7 +79,12 @@ than asking a natural-language graph query:
 rg -n 'transform_data' openghg tests
 scip-query --index index.scip --root . at openghg/store/_flux.py:103
 scip-query --index index.scip --root . refs \
-  openghg/store/_flux.py:Flux.transform_data --incoming
+  openghg/store/_flux.py:Flux.transform_data --incoming --compact --limit 20
+
+# Find direct test evidence without dumping production references.
+scip-query --index index.scip --root . refs \
+  openghg.store.base._base.BaseStore.assign_data --incoming \
+  --path tests/ --compact --limit 20
 ```
 
 ## Semantic limits

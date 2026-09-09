@@ -1,6 +1,9 @@
 use std::{env, io, path::PathBuf, process::ExitCode};
 
-use scip_query::{Page, QueryIndex, RefDirection, Resolution, SymbolView};
+use scip_query::{
+    Page, QueryIndex, RefDirection, ReferenceEvidence, ReferenceView, Resolution, SymbolId,
+    SymbolView,
+};
 use serde::Serialize;
 use serde_json::json;
 
@@ -14,7 +17,8 @@ Commands:
   find QUERY [--path PATH] [--limit N]
   at PATH:LINE[:COLUMN] [--limit N]
   context SELECTOR
-  refs SELECTOR [--incoming|--outgoing|--both] [--limit N]
+  refs SELECTOR [--incoming|--outgoing|--both] [--path PREFIX] [--compact]
+       [--offset N] [--limit N]
   members SELECTOR [--limit N]
   path SOURCE TARGET [--max-depth N|--depth N] [--limit N]
   affected SELECTOR [--max-depth N|--depth N] [--limit N]
@@ -48,6 +52,9 @@ enum Command {
     Refs {
         selector: String,
         direction: Direction,
+        path: Option<String>,
+        compact: bool,
+        offset: usize,
         limit: usize,
     },
     Members {
@@ -139,11 +146,21 @@ fn parse_command(name: &str, args: &[String], default_limit: usize) -> Result<Co
     let mut depth = DEFAULT_DEPTH;
     let mut direction = Direction::Both;
     let mut direction_seen = false;
+    let mut compact = false;
+    let mut offset = 0;
     let mut position = 0;
     while position < args.len() {
         match args[position].as_str() {
             "--limit" => limit = positive(&value(args, &mut position, "--limit")?, "limit")?,
-            "--path" if name == "find" => path = Some(value(args, &mut position, "--path")?),
+            "--path" if name == "find" || name == "refs" => {
+                path = Some(value(args, &mut position, "--path")?)
+            }
+            "--compact" if name == "refs" => compact = true,
+            "--offset" if name == "refs" => {
+                offset = value(args, &mut position, "--offset")?
+                    .parse::<usize>()
+                    .map_err(|_| "offset must be a non-negative integer".to_owned())?;
+            }
             "--depth" | "--max-depth" if name == "path" || name == "affected" => {
                 let option = args[position].clone();
                 depth = positive(&value(args, &mut position, &option)?, "depth")?;
@@ -189,6 +206,9 @@ fn parse_command(name: &str, args: &[String], default_limit: usize) -> Result<Co
         ("refs", [selector]) => Ok(Command::Refs {
             selector: selector.clone(),
             direction,
+            path,
+            compact,
+            offset,
             limit,
         }),
         ("members", [selector]) => Ok(Command::Members {
@@ -302,6 +322,9 @@ fn execute(cli: Cli) -> Result<u8, String> {
         Command::Refs {
             selector,
             direction,
+            path,
+            compact,
+            offset,
             limit,
         } => {
             let symbol = match select(&index, &selector, None, limit) {
@@ -315,12 +338,39 @@ fn execute(cli: Cli) -> Result<u8, String> {
                 Direction::Outgoing => ("outgoing", RefDirection::Outgoing),
                 Direction::Both => ("both", RefDirection::Both),
             };
-            let result = index.refs(&symbol.id, direction, limit);
+            let mut items = index.refs(&symbol.id, direction, usize::MAX).items;
+            if let Some(prefix) = path.as_deref() {
+                items.retain(|reference| {
+                    reference_document(reference)
+                        .is_some_and(|document| document.starts_with(prefix))
+                });
+            }
+            let total = items.len();
+            let items: Vec<_> = items.into_iter().skip(offset).take(limit).collect();
+            let returned = items.len();
+            let next_offset = (offset + returned < total).then_some(offset + returned);
+            let items = if compact {
+                items
+                    .iter()
+                    .map(|reference| compact_reference(&index, reference))
+                    .collect::<Vec<_>>()
+            } else {
+                items.iter().map(|reference| json!(reference)).collect()
+            };
             emit(&json!({
+                "compact": compact,
                 "command": "refs",
                 "direction": direction_name,
+                "path": path,
                 "resolved": symbol.id,
-                "result": result,
+                "result": {
+                    "items": items,
+                    "next_offset": next_offset,
+                    "offset": offset,
+                    "returned": returned,
+                    "total": total,
+                    "truncated": next_offset.is_some(),
+                },
                 "selector": selector,
                 "status": "ok",
             }))?;
@@ -391,7 +441,7 @@ fn execute(cli: Cli) -> Result<u8, String> {
 
 enum SelectionFailure {
     Ambiguous(Page<SymbolView>),
-    NotFound,
+    NotFound(Page<SymbolView>),
 }
 
 fn select(
@@ -403,8 +453,71 @@ fn select(
     match index.resolve(selector, document, limit) {
         Resolution::Found { symbol } => Ok(symbol),
         Resolution::Ambiguous { candidates, .. } => Err(SelectionFailure::Ambiguous(candidates)),
-        Resolution::NotFound { .. } => Err(SelectionFailure::NotFound),
+        Resolution::NotFound { .. } => {
+            if let Some(alias) = hash_selector_alias(selector) {
+                match index.resolve(&alias, document, limit) {
+                    Resolution::Found { symbol } => return Ok(symbol),
+                    Resolution::Ambiguous { candidates, .. } => {
+                        return Err(SelectionFailure::Ambiguous(candidates));
+                    }
+                    Resolution::NotFound { .. } => {}
+                }
+            }
+            let needle = selector
+                .rsplit(['#', '.', ':', '/'])
+                .find(|part| !part.is_empty())
+                .unwrap_or(selector)
+                .trim_end_matches("()");
+            Err(SelectionFailure::NotFound(index.find(needle, limit)))
+        }
     }
+}
+
+fn hash_selector_alias(selector: &str) -> Option<String> {
+    if selector.contains(' ') {
+        return None;
+    }
+    let (owner, member) = selector.rsplit_once('#')?;
+    (!owner.is_empty() && !member.is_empty()).then(|| format!("{owner}.{member}"))
+}
+
+fn reference_document(reference: &ReferenceView) -> Option<&str> {
+    match &reference.evidence {
+        ReferenceEvidence::Occurrence { occurrence } => Some(&occurrence.document),
+        ReferenceEvidence::Relationship { relationship } => relationship.document.as_deref(),
+    }
+}
+
+fn symbol_label(index: &QueryIndex, id: &SymbolId) -> String {
+    match index.resolve(&id.canonical(), None, 1) {
+        Resolution::Found { symbol } => symbol.qualified_name,
+        _ => id.canonical(),
+    }
+}
+
+fn compact_reference(index: &QueryIndex, reference: &ReferenceView) -> serde_json::Value {
+    let evidence = match &reference.evidence {
+        ReferenceEvidence::Occurrence { occurrence } => json!({
+            "column": occurrence.range.map(|range| range.start.character + 1),
+            "document": occurrence.document,
+            "line": occurrence.range.map(|range| range.start.line + 1),
+            "provenance": occurrence.provenance,
+            "roles": occurrence.role_names,
+        }),
+        ReferenceEvidence::Relationship { relationship } => json!({
+            "document": relationship.document,
+            "is_definition": relationship.is_definition,
+            "is_implementation": relationship.is_implementation,
+            "is_reference": relationship.is_reference,
+            "is_type_definition": relationship.is_type_definition,
+            "provenance": relationship.provenance,
+        }),
+    };
+    json!({
+        "evidence": evidence,
+        "source": symbol_label(index, &reference.source),
+        "target": symbol_label(index, &reference.target),
+    })
 }
 
 fn emit_selection_failure(
@@ -421,11 +534,12 @@ fn emit_selection_failure(
             "selector_role": role,
             "status": "ambiguous",
         }))?,
-        SelectionFailure::NotFound => emit(&json!({
+        SelectionFailure::NotFound(suggestions) => emit(&json!({
             "command": command,
             "selector": selector,
             "selector_role": role,
             "status": "not_found",
+            "suggestions": suggestions,
         }))?,
     }
     Ok(2)
@@ -465,6 +579,9 @@ mod tests {
             Command::Refs {
                 selector: "pkg/a.py:A.f".into(),
                 direction: Direction::Outgoing,
+                path: None,
+                compact: false,
+                offset: 0,
                 limit: 12,
             }
         );

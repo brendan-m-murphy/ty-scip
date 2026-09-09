@@ -234,6 +234,9 @@ fn qualified_member_resolution_is_exact_and_bare_member_is_ambiguous() {
     assert_contains(&exact, ALPHA_RUN);
     assert_contains(&exact, "pkg/models.py");
 
+    let hash_alias = fixture.success(&["refs", "pkg.Alpha#run", "--outgoing", "--compact"]);
+    assert_eq!(hash_alias["resolved"]["symbol"], ALPHA_RUN);
+
     let ambiguous = fixture.json(&["context", "run"], 2);
     assert_eq!(ambiguous["status"], "ambiguous");
     let candidates = ambiguous["candidates"]["items"].as_array().unwrap();
@@ -248,6 +251,55 @@ fn qualified_member_resolution_is_exact_and_bare_member_is_ambiguous() {
             .iter()
             .any(|item| item["id"]["symbol"] == BETA_RUN)
     );
+}
+
+#[test]
+fn compact_refs_support_path_filtering_and_pagination() {
+    let fixture = Fixture::new();
+
+    let first = fixture.success(&[
+        "refs",
+        "pkg/models.py:Alpha.run",
+        "--outgoing",
+        "--path",
+        "pkg/models.py",
+        "--compact",
+        "--limit",
+        "1",
+    ]);
+    assert_eq!(first["compact"], true);
+    assert_eq!(first["result"]["total"], 3);
+    assert_eq!(first["result"]["returned"], 1);
+    assert_eq!(first["result"]["next_offset"], 1);
+    let item = &result_items(&first)[0];
+    assert_eq!(item["source"], "pkg.Alpha.run");
+    assert_eq!(item["evidence"]["document"], "pkg/models.py");
+    assert!(item["evidence"].get("legacy_range").is_none());
+
+    let second = fixture.success(&[
+        "refs",
+        "pkg/models.py:Alpha.run",
+        "--outgoing",
+        "--path",
+        "pkg/models.py",
+        "--compact",
+        "--offset",
+        "1",
+        "--limit",
+        "2",
+    ]);
+    assert_eq!(second["result"]["offset"], 1);
+    assert_eq!(second["result"]["returned"], 2);
+    assert!(second["result"]["next_offset"].is_null());
+}
+
+#[test]
+fn missing_selector_returns_bounded_suggestions() {
+    let fixture = Fixture::new();
+    let missing = fixture.json(&["refs", "pkg.Missing#run", "--limit", "1"], 2);
+    assert_eq!(missing["status"], "not_found");
+    assert_eq!(missing["suggestions"]["returned"], 1);
+    assert_eq!(missing["suggestions"]["truncated"], true);
 }
 
 #[test]
