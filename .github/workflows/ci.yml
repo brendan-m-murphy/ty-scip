@@ -48,6 +48,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7.0.1
+      - if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.98.1
