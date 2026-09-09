@@ -50,7 +50,10 @@ pub(crate) struct IndexData {
 }
 
 #[derive(Default)]
-struct IdentifierRanges(Vec<(TextRange, bool)>);
+struct IdentifierRanges {
+    identifiers: Vec<(TextRange, bool)>,
+    string_literals: Vec<TextRange>,
+}
 
 #[derive(Default)]
 struct OccurrenceRoles(HashMap<TextRange, i32>);
@@ -144,21 +147,22 @@ impl<'ast> SourceOrderVisitor<'ast> for OccurrenceRoles {
 impl<'ast> SourceOrderVisitor<'ast> for IdentifierRanges {
     fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
         match node {
-            AnyNodeRef::ExprName(name) => self.0.push((name.range(), true)),
+            AnyNodeRef::ExprName(name) => self.identifiers.push((name.range(), true)),
             AnyNodeRef::ExprSubscript(subscript) => {
                 if let Expr::StringLiteral(string) = subscript.slice.as_ref()
                     && let Some(string) = string.as_single_part_string()
                 {
-                    self.0.push((string.content_range(), false));
+                    self.identifiers.push((string.content_range(), false));
                 }
             }
+            AnyNodeRef::ExprStringLiteral(string) => self.string_literals.push(string.range()),
             _ => {}
         }
         TraversalSignal::Traverse
     }
 
     fn visit_identifier(&mut self, identifier: &'ast Identifier) {
-        self.0.push((identifier.range(), true));
+        self.identifiers.push((identifier.range(), true));
     }
 }
 
@@ -401,7 +405,22 @@ pub(crate) fn index(
             let module = parsed_module(&db, program_file.python_file(&db)).load(&db);
             let mut visitor = IdentifierRanges::default();
             visitor.visit_body(module.suite());
-            visitor.0
+            for token in ty_ide::semantic_tokens(&db, program_file, None).iter() {
+                if is_symbol_token(token.token_type)
+                    && visitor.string_literals.iter().any(|literal| {
+                        *literal != token.range && literal.contains_range(token.range)
+                    })
+                {
+                    visitor.identifiers.push((token.range, true));
+                }
+            }
+            visitor
+                .identifiers
+                .sort_unstable_by_key(|(range, report)| (range.start(), range.end(), !report));
+            visitor
+                .identifiers
+                .dedup_by_key(|(range, _)| (range.start(), range.end()));
+            visitor.identifiers
         };
 
         for (range, report_unresolved) in ranges {
@@ -592,6 +611,18 @@ pub(crate) fn index(
         unsupported_syntax_errors,
         samples,
     })
+}
+
+fn is_symbol_token(token: ty_ide::SemanticTokenType) -> bool {
+    !matches!(
+        token,
+        ty_ide::SemanticTokenType::Keyword
+            | ty_ide::SemanticTokenType::String
+            | ty_ide::SemanticTokenType::Number
+            | ty_ide::SemanticTokenType::Operator
+            | ty_ide::SemanticTokenType::Regexp
+            | ty_ide::SemanticTokenType::BuiltinConstant
+    )
 }
 
 fn stdlib_symbol(

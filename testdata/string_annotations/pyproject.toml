@@ -1,0 +1,6 @@
+[project]
+name = "string-annotations-fixture"
+version = "1.0.0"
+
+[tool.ty.environment]
+python-version = "3.12"
