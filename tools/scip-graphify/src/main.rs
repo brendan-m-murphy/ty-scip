@@ -8,7 +8,7 @@ use std::{
 };
 
 use protobuf::Message;
-use ty_scip::graphify;
+use scip_graphify::graphify;
 
 const USAGE: &str = "Usage: scip-graphify INPUT.scip [OUTPUT.json]\n\nConvert a SCIP protobuf index into deterministic Graphify JSON. Use '-' as the output path for stdout.";
 

@@ -94,27 +94,13 @@ metadata, then an empty deterministic fallback.
 See [migrating from scip-python](docs/migration-from-scip-python.md) for the
 supported command mapping and deliberately unsupported options.
 
-### Experimental Graphify projection
+## Repository tools
 
-`scip-graphify` converts any compatible SCIP protobuf directly to Graphify's
-JSON graph shape without first reducing it to scip-cli's SQLite schema:
-
-```console
-scip-graphify index.scip graph.json
-graphify path add_timed_data plan_timed_data_update --graph graph.json
-graphify affected plan_timed_data_update --graph graph.json
-```
-
-The disposable JSON retains exact SCIP symbols, kinds, occurrence ranges and
-roles, enclosing-definition ownership, and relationships. It emits honest
-`references`, `imports`, `inherits`, and derived `contains` edges; it does not
-mislabel a reference as a runtime `calls` edge. Occurrence-level multigraphs
-are substantially larger and noisier for broad natural-language queries than
-Graphify's AST-oriented graph, so this projection is intended for precise
-paths and impact analysis rather than replacing the canonical `.scip` index.
-The [graph-query plan](docs/plans/scip-graph-query.md) records the prototype
-evidence, lossless SQLite design, accuracy gate, and possible ty/Ruff
-enrichments.
+The experimental [SCIP-to-Graphify consumer](tools/scip-graphify/README.md) is
+an independent Cargo package under `tools/`. It reads standard SCIP and does
+not depend on ty or Ruff. It is not included in the `ty-scip` Python wheel.
+The [spike record](docs/research/scip-graphify-spike.md) documents its evidence
+and possible lossless query-store follow-up.
 
 ## What it indexes
 

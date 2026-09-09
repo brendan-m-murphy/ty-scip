@@ -8,7 +8,7 @@ use protobuf::Message;
 use scip::types::Index;
 
 #[test]
-fn refuses_to_overwrite_input_scip_with_graph_json() {
+fn converter_refuses_to_overwrite_input_scip_with_graph_json() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")

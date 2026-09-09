@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use scip::types::{
-    Document, Index, Occurrence, SymbolInformation, SymbolRole, occurrence, symbol_information,
+    Index, Occurrence, SymbolInformation, SymbolRole, occurrence, symbol_information,
 };
 use serde::Serialize;
 
@@ -66,6 +66,51 @@ struct Range {
     start_character: i32,
     end_line: i32,
     end_character: i32,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SymbolMetadata {
+    display_name: Option<String>,
+    kind: Option<symbol_information::Kind>,
+    kind_conflict: bool,
+    enclosing_symbol: Option<String>,
+    enclosing_conflict: bool,
+}
+
+impl SymbolMetadata {
+    fn absorb(&mut self, info: &SymbolInformation) {
+        if !info.display_name.is_empty()
+            && self
+                .display_name
+                .as_ref()
+                .is_none_or(|current| info.display_name < *current)
+        {
+            self.display_name = Some(info.display_name.clone());
+        }
+        if !self.kind_conflict
+            && let Ok(kind) = info.kind.enum_value()
+            && kind != symbol_information::Kind::UnspecifiedKind
+        {
+            match self.kind {
+                None => self.kind = Some(kind),
+                Some(current) if current == kind => {}
+                Some(_) => {
+                    self.kind = None;
+                    self.kind_conflict = true;
+                }
+            }
+        }
+        if !self.enclosing_conflict && !info.enclosing_symbol.is_empty() {
+            match self.enclosing_symbol.as_deref() {
+                None => self.enclosing_symbol = Some(info.enclosing_symbol.clone()),
+                Some(current) if current == info.enclosing_symbol => {}
+                Some(_) => {
+                    self.enclosing_symbol = None;
+                    self.enclosing_conflict = true;
+                }
+            }
+        }
+    }
 }
 
 impl Range {
@@ -184,17 +229,31 @@ pub fn to_graph(index: &Index) -> Graph {
     let mut nodes = BTreeMap::<String, Node>::new();
     let mut edges = BTreeMap::<String, Edge>::new();
 
-    let mut symbol_info = BTreeMap::<String, &SymbolInformation>::new();
+    let mut symbol_info = BTreeMap::<String, SymbolMetadata>::new();
+    let mut local_symbol_info = BTreeMap::<String, BTreeMap<String, SymbolMetadata>>::new();
     for document in &index.documents {
         for info in &document.symbols {
-            if !info.symbol.starts_with("local ") {
-                symbol_info.entry(info.symbol.clone()).or_insert(info);
+            if info.symbol.starts_with("local ") {
+                local_symbol_info
+                    .entry(document.relative_path.clone())
+                    .or_default()
+                    .entry(info.symbol.clone())
+                    .or_default()
+                    .absorb(info);
+            } else {
+                symbol_info
+                    .entry(info.symbol.clone())
+                    .or_default()
+                    .absorb(info);
             }
         }
     }
     for info in &index.external_symbols {
         if !info.symbol.starts_with("local ") {
-            symbol_info.entry(info.symbol.clone()).or_insert(info);
+            symbol_info
+                .entry(info.symbol.clone())
+                .or_default()
+                .absorb(info);
         }
     }
 
@@ -236,7 +295,12 @@ pub fn to_graph(index: &Index) -> Graph {
             };
             let symbol = occurrence.symbol.clone();
             let id = symbol_id(&document.relative_path, &symbol);
-            let info = symbol_info_for(document, &symbol_info, &symbol);
+            let info = symbol_metadata_for(
+                &document.relative_path,
+                &symbol_info,
+                &local_symbol_info,
+                &symbol,
+            );
             let label = display_name(&symbol, info);
             add_symbol_node(
                 &mut nodes,
@@ -261,18 +325,30 @@ pub fn to_graph(index: &Index) -> Graph {
     for document in &index.documents {
         for info in &document.symbols {
             let id = symbol_id(&document.relative_path, &info.symbol);
+            let preferred = symbol_metadata_for(
+                &document.relative_path,
+                &symbol_info,
+                &local_symbol_info,
+                &info.symbol,
+            );
             ensure_target_node(
                 &mut nodes,
                 &id,
                 &document.relative_path,
                 &info.symbol,
-                Some(info),
+                preferred,
             );
         }
     }
     for info in &index.external_symbols {
         let id = symbol_id(EXTERNAL_SYMBOL_PATH, &info.symbol);
-        ensure_target_node(&mut nodes, &id, EXTERNAL_SOURCE, &info.symbol, Some(info));
+        ensure_target_node(
+            &mut nodes,
+            &id,
+            EXTERNAL_SOURCE,
+            &info.symbol,
+            symbol_info.get(&info.symbol),
+        );
     }
 
     // Every definition is contained by its source file.  Definition ranges
@@ -304,16 +380,33 @@ pub fn to_graph(index: &Index) -> Graph {
             // Preserve symbol hierarchy as a derived edge. The smallest
             // enclosing definition owns a nested definition just as it owns
             // references in its body.
-            let explicit_parent = symbol_info_for(document, &symbol_info, symbol)
-                .filter(|info| !info.enclosing_symbol.is_empty())
-                .map(|info| info.enclosing_symbol.clone())
-                .filter(|parent| symbol_info_for(document, &symbol_info, parent).is_some());
+            let explicit_parent = symbol_metadata_for(
+                &document.relative_path,
+                &symbol_info,
+                &local_symbol_info,
+                symbol,
+            )
+            .and_then(|info| info.enclosing_symbol.clone())
+            .filter(|parent| {
+                symbol_metadata_for(
+                    &document.relative_path,
+                    &symbol_info,
+                    &local_symbol_info,
+                    parent,
+                )
+                .is_some()
+            });
             let parent = explicit_parent.or_else(|| {
                 defs.iter()
                     .filter(|(candidate, _, candidate_symbol, _)| {
                         candidate_symbol != symbol
                             && candidate.contains(*range)
-                            && is_lexical_scope(candidate_symbol, document, &symbol_info)
+                            && is_lexical_scope(
+                                candidate_symbol,
+                                &document.relative_path,
+                                &symbol_info,
+                                &local_symbol_info,
+                            )
                     })
                     .min_by_key(|(candidate, _, candidate_symbol, _)| {
                         (candidate.size(), candidate_symbol.clone())
@@ -328,7 +421,12 @@ pub fn to_graph(index: &Index) -> Graph {
                         &parent_id,
                         &document.relative_path,
                         &parent,
-                        symbol_info_for(document, &symbol_info, &parent),
+                        symbol_metadata_for(
+                            &document.relative_path,
+                            &symbol_info,
+                            &local_symbol_info,
+                            &parent,
+                        ),
                     );
                 }
                 insert_edge(
@@ -366,17 +464,33 @@ pub fn to_graph(index: &Index) -> Graph {
                 continue;
             };
             let target = symbol_id(&document.relative_path, &occurrence.symbol);
+            let target_source = if occurrence.symbol.starts_with("local ") {
+                document.relative_path.as_str()
+            } else {
+                EXTERNAL_SOURCE
+            };
             ensure_target_node(
                 &mut nodes,
                 &target,
-                &document.relative_path,
+                target_source,
                 &occurrence.symbol,
-                symbol_info_for(document, &symbol_info, &occurrence.symbol),
+                symbol_metadata_for(
+                    &document.relative_path,
+                    &symbol_info,
+                    &local_symbol_info,
+                    &occurrence.symbol,
+                ),
             );
             let owner = defs
                 .iter()
                 .filter(|(definition, _, symbol, _)| {
-                    definition.contains(range) && is_lexical_scope(symbol, document, &symbol_info)
+                    definition.contains(range)
+                        && is_lexical_scope(
+                            symbol,
+                            &document.relative_path,
+                            &symbol_info,
+                            &local_symbol_info,
+                        )
                 })
                 .min_by_key(|(definition, _, symbol, _)| (definition.size(), symbol.clone()))
                 .map(|(_, _, symbol, _)| symbol_id(&document.relative_path, symbol))
@@ -401,54 +515,96 @@ pub fn to_graph(index: &Index) -> Graph {
 
     // Relationships are semantic SCIP evidence, and therefore are preserved
     // independently of whether the target has a local definition.
-    for document in &index.documents {
-        for info in &document.symbols {
-            let source = symbol_id(&document.relative_path, &info.symbol);
+    let relationship_sources = index
+        .documents
+        .iter()
+        .flat_map(|document| {
+            document.symbols.iter().map(move |info| {
+                (
+                    Some(document),
+                    document.relative_path.as_str(),
+                    document.relative_path.as_str(),
+                    document.position_encoding.value(),
+                    info,
+                )
+            })
+        })
+        .chain(
+            index
+                .external_symbols
+                .iter()
+                .map(|info| (None, EXTERNAL_SYMBOL_PATH, EXTERNAL_SOURCE, 0, info)),
+        );
+    for (document, identity_path, source_file, position_encoding, info) in relationship_sources {
+        let source = symbol_id(identity_path, &info.symbol);
+        let source_info = document
+            .and_then(|document| {
+                symbol_metadata_for(
+                    &document.relative_path,
+                    &symbol_info,
+                    &local_symbol_info,
+                    &info.symbol,
+                )
+            })
+            .or_else(|| symbol_info.get(&info.symbol));
+        ensure_target_node(&mut nodes, &source, source_file, &info.symbol, source_info);
+        for relationship in &info.relationships {
+            let target_identity_path = if relationship.symbol.starts_with("local ") {
+                identity_path
+            } else {
+                EXTERNAL_SYMBOL_PATH
+            };
+            let target_source_file = if relationship.symbol.starts_with("local ") {
+                source_file
+            } else {
+                EXTERNAL_SOURCE
+            };
+            let target_info = document
+                .and_then(|document| {
+                    symbol_metadata_for(
+                        &document.relative_path,
+                        &symbol_info,
+                        &local_symbol_info,
+                        &relationship.symbol,
+                    )
+                })
+                .or_else(|| symbol_info.get(&relationship.symbol));
+            let target = symbol_id(target_identity_path, &relationship.symbol);
             ensure_target_node(
                 &mut nodes,
-                &source,
-                &document.relative_path,
-                &info.symbol,
-                Some(info),
+                &target,
+                target_source_file,
+                &relationship.symbol,
+                target_info,
             );
-            for relationship in &info.relationships {
-                let target = symbol_id(&document.relative_path, &relationship.symbol);
-                ensure_target_node(
-                    &mut nodes,
-                    &target,
-                    &document.relative_path,
-                    &relationship.symbol,
-                    symbol_info_for(document, &symbol_info, &relationship.symbol),
+            let mut relations = Vec::new();
+            if relationship.is_implementation {
+                relations.push("implements");
+            }
+            if relationship.is_type_definition {
+                relations.push("type_definition");
+            }
+            if relationship.is_reference {
+                relations.push("references");
+            }
+            if relationship.is_definition {
+                relations.push("relationship_definition");
+            }
+            for relation in relations {
+                insert_edge(
+                    &mut edges,
+                    edge(
+                        source.clone(),
+                        target.clone(),
+                        relation,
+                        "relationship",
+                        source_file,
+                        &[],
+                        0,
+                        position_encoding,
+                        "SCIP",
+                    ),
                 );
-                let mut relations = Vec::new();
-                if relationship.is_implementation {
-                    relations.push("inherits");
-                }
-                if relationship.is_type_definition {
-                    relations.push("type_definition");
-                }
-                if relationship.is_reference {
-                    relations.push("relationship_reference");
-                }
-                if relationship.is_definition {
-                    relations.push("relationship_definition");
-                }
-                for relation in relations {
-                    insert_edge(
-                        &mut edges,
-                        edge(
-                            source.clone(),
-                            target.clone(),
-                            relation,
-                            "relationship",
-                            &document.relative_path,
-                            &[],
-                            0,
-                            document.position_encoding.value(),
-                            "SCIP",
-                        ),
-                    );
-                }
             }
         }
     }
@@ -489,7 +645,7 @@ fn add_symbol_node(
     path: &str,
     raw_range: &[i32],
     symbol: &str,
-    info: Option<&SymbolInformation>,
+    info: Option<&SymbolMetadata>,
     origin: &str,
 ) {
     nodes.entry(id.to_owned()).or_insert_with(|| Node {
@@ -500,7 +656,7 @@ fn add_symbol_node(
         source_location: source_location(raw_range),
         source_range: Some(raw_range.to_owned()),
         scip_symbol: Some(symbol.to_owned()),
-        scip_kind: info.map(|item| item.kind.value()),
+        scip_kind: info.and_then(|item| item.kind.map(|kind| kind as i32)),
         origin: origin.to_owned(),
     });
 }
@@ -510,7 +666,7 @@ fn ensure_target_node(
     id: &str,
     path: &str,
     symbol: &str,
-    info: Option<&SymbolInformation>,
+    info: Option<&SymbolMetadata>,
 ) {
     if nodes.contains_key(id) {
         return;
@@ -525,7 +681,7 @@ fn ensure_target_node(
             source_location: None,
             source_range: None,
             scip_symbol: Some(symbol.to_owned()),
-            scip_kind: info.map(|item| item.kind.value()),
+            scip_kind: info.and_then(|item| item.kind.map(|kind| kind as i32)),
             origin: "scip".to_owned(),
         },
     );
@@ -599,29 +755,31 @@ fn file_id(path: &str) -> String {
     format!("file:{path}")
 }
 
-fn symbol_info_for<'a>(
-    document: &'a Document,
-    global: &BTreeMap<String, &'a SymbolInformation>,
+fn symbol_metadata_for<'a>(
+    path: &str,
+    global: &'a BTreeMap<String, SymbolMetadata>,
+    local: &'a BTreeMap<String, BTreeMap<String, SymbolMetadata>>,
     symbol: &str,
-) -> Option<&'a SymbolInformation> {
+) -> Option<&'a SymbolMetadata> {
     if symbol.starts_with("local ") {
-        document.symbols.iter().find(|info| info.symbol == symbol)
+        local.get(path).and_then(|symbols| symbols.get(symbol))
     } else {
-        global.get(symbol).copied()
+        global.get(symbol)
     }
 }
 
 fn is_lexical_scope(
     symbol: &str,
-    document: &Document,
-    global: &BTreeMap<String, &SymbolInformation>,
+    path: &str,
+    global: &BTreeMap<String, SymbolMetadata>,
+    local: &BTreeMap<String, BTreeMap<String, SymbolMetadata>>,
 ) -> bool {
     // Local bindings (imports, parameters, variables) are not scopes, while
     // local nested callables and types can be valid lexical scopes.
-    let Some(info) = symbol_info_for(document, global, symbol) else {
+    let Some(info) = symbol_metadata_for(path, global, local, symbol) else {
         return false;
     };
-    let Ok(kind) = info.kind.enum_value() else {
+    let Some(kind) = info.kind else {
         return false;
     };
     if symbol.starts_with("local ") {
@@ -657,10 +815,8 @@ fn symbol_id(path: &str, symbol: &str) -> String {
     }
 }
 
-fn display_name(symbol: &str, info: Option<&SymbolInformation>) -> String {
-    if let Some(name) = info.map(|item| item.display_name.as_str())
-        && !name.is_empty()
-    {
+fn display_name(symbol: &str, info: Option<&SymbolMetadata>) -> String {
+    if let Some(name) = info.and_then(|item| item.display_name.as_deref()) {
         if symbol.starts_with("local ") {
             return format!("{name} [{symbol}]");
         }

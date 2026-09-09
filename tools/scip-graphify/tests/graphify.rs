@@ -2,7 +2,7 @@ use scip::types::{
     Document, Index, MultiLineRange, Occurrence, Relationship, SymbolInformation, SymbolRole,
     symbol_information,
 };
-use ty_scip::graphify::{to_graph, to_json};
+use scip_graphify::graphify::{to_graph, to_json};
 
 fn occurrence(symbol: &str, range: &[i32], roles: i32) -> Occurrence {
     Occurrence {
@@ -71,7 +71,7 @@ fn emits_files_symbols_and_exact_reference_roles() {
 }
 
 #[test]
-fn relationships_become_inherits_edges() {
+fn implementation_relationships_become_implements_edges() {
     let index = Index {
         documents: vec![Document {
             relative_path: "pkg/types.py".into(),
@@ -99,15 +99,11 @@ fn relationships_become_inherits_edges() {
     };
     let graph = to_graph(&index);
     assert!(graph.edges.iter().any(|edge| {
-        edge.relation == "inherits"
+        edge.relation == "implements"
             && edge.source == "symbol:pkg/Dog#"
             && edge.target == "symbol:pkg/Animal#"
     }));
-    for relation in [
-        "type_definition",
-        "relationship_reference",
-        "relationship_definition",
-    ] {
+    for relation in ["type_definition", "references", "relationship_definition"] {
         assert!(graph.edges.iter().any(|edge| {
             edge.relation == relation
                 && edge.source == "symbol:pkg/Dog#"
@@ -482,4 +478,108 @@ fn explicit_parent_without_definition_occurrence_gets_direct_containment() {
             && edge.target == "symbol:pkg/child()."
             && edge.relation == "contains"
     }));
+}
+
+#[test]
+fn external_symbol_relationships_are_preserved_without_fake_source_files() {
+    let index = Index {
+        external_symbols: vec![
+            SymbolInformation {
+                symbol: "external package 1.0 Impl#".into(),
+                display_name: "Impl".into(),
+                relationships: vec![Relationship {
+                    symbol: "external package 1.0 Base#".into(),
+                    is_implementation: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            SymbolInformation {
+                symbol: "external package 1.0 Base#".into(),
+                display_name: "Base".into(),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+
+    let graph = to_graph(&index);
+    assert!(graph.edges.iter().any(|edge| {
+        edge.source == "symbol:external package 1.0 Impl#"
+            && edge.target == "symbol:external package 1.0 Base#"
+            && edge.relation == "implements"
+            && edge.source_file.is_empty()
+    }));
+    assert!(
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node.id.starts_with("symbol:external package"))
+            .all(|node| node.source_file.is_empty())
+    );
+}
+
+#[test]
+fn complete_metadata_wins_and_unknown_targets_remain_locationless() {
+    let symbol = "example package 1.0 target().";
+    let unknown = "missing package 1.0 target().";
+    let index = Index {
+        documents: vec![
+            Document {
+                relative_path: "definition.py".into(),
+                symbols: vec![SymbolInformation {
+                    symbol: symbol.into(),
+                    ..Default::default()
+                }],
+                occurrences: vec![occurrence(
+                    symbol,
+                    &[0, 0, 6],
+                    SymbolRole::Definition as i32,
+                )],
+                ..Default::default()
+            },
+            Document {
+                relative_path: "metadata.py".into(),
+                symbols: vec![SymbolInformation {
+                    symbol: symbol.into(),
+                    display_name: "target".into(),
+                    kind: symbol_information::Kind::Function.into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            Document {
+                relative_path: "reference.py".into(),
+                occurrences: vec![occurrence(
+                    unknown,
+                    &[1, 0, 6],
+                    SymbolRole::ReadAccess as i32,
+                )],
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+
+    let graph = to_graph(&index);
+    let defined = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == format!("symbol:{symbol}"))
+        .unwrap();
+    assert_eq!(defined.label, "target");
+    assert_eq!(
+        defined.scip_kind,
+        Some(symbol_information::Kind::Function as i32)
+    );
+    assert_eq!(defined.source_file, "definition.py");
+
+    let unresolved = graph
+        .nodes
+        .iter()
+        .find(|node| node.id == format!("symbol:{unknown}"))
+        .unwrap();
+    assert!(unresolved.source_file.is_empty());
+    assert!(unresolved.source_location.is_none());
+    assert!(unresolved.scip_kind.is_none());
 }

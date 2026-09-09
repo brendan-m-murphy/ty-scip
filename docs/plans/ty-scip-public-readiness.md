@@ -65,6 +65,10 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 5. Explore public ty APIs for inherited members, implementations, type
    definitions, docstrings, signatures, and diagnostics. Record any missing
    stable API as a narrow Astral request.
+6. Keep producer-only semantic evidence here: bulk resolved occurrences,
+   project-walk diagnostics, installed-distribution ownership, upward method
+   overrides, and Ruff-proven callee positions. Prefer standard SCIP fields;
+   consider an optional producer sidecar only after a demonstrated need.
 
 ### 2. SCIP fidelity
 
@@ -104,6 +108,8 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 ## Working rules
 
 - Keep all direct Astral crates at exactly one commit.
+- Keep ty/Ruff access inside `ty-scip`. Downstream SCIP consumers must not
+  import analyzer crates or duplicate semantic extraction.
 - Prefer a public upstream API over copied analyzer logic or a fork.
 - Never serialize Salsa, scope, place, or node IDs.
 - Every new normalization rule needs a positive fixture and a false-link
