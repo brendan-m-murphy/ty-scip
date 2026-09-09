@@ -66,7 +66,7 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
     assert_eq!(inherited_read.symbol_roles, SymbolRole::ReadAccess as i32);
 
     let property = support::occurrence(library, &[32, 8, 13]);
-    let property_assignment = support::occurrence(library, &[36, 13, 18]);
+    let property_assignment = support::occurrence(library, &[37, 13, 18]);
     let property_read = support::occurrence(caller, &[13, 9, 14]);
     assert!(
         property.symbol.contains("Labelled#label"),
@@ -84,7 +84,7 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
             .count(),
         3
     );
-    for range in [[27, 14, 21], [42, 15, 26], [46, 15, 25], [50, 15, 28]] {
+    for range in [[27, 14, 21], [43, 15, 26], [47, 15, 25], [51, 15, 28]] {
         assert!(
             !library
                 .occurrences
@@ -93,21 +93,32 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
         );
     }
     assert!(!library.symbols.iter().any(|symbol| {
-        ["foreign", "static_only", "class_only", "replaced_only"]
-            .iter()
-            .any(|name| symbol.symbol.contains(name))
+        [
+            "foreign",
+            "property_only",
+            "static_only",
+            "class_only",
+            "replaced_only",
+        ]
+        .iter()
+        .any(|name| symbol.symbol.contains(name))
     }));
+    assert!(
+        support::occurrence(library, &[33, 13, 26])
+            .symbol
+            .starts_with("local ")
+    );
     assert!(
         !caller
             .occurrences
             .iter()
             .any(|occurrence| occurrence.range == [17, 16, 21])
     );
-    let other = support::occurrence(library, &[55, 13, 18]);
+    let other = support::occurrence(library, &[56, 13, 18]);
     assert!(other.symbol.contains("Other#value."));
     assert_ne!(other.symbol, first.symbol);
 
-    let decorated_assignment = support::occurrence(library, &[61, 13, 16]);
+    let decorated_assignment = support::occurrence(library, &[62, 13, 16]);
     let decorated_read = support::occurrence(caller, &[21, 10, 13]);
     assert!(decorated_assignment.symbol.contains("Decorated#tag."));
     assert_eq!(decorated_read.symbol, decorated_assignment.symbol);

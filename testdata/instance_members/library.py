@@ -31,6 +31,7 @@ class Counter:
 class Labelled:
     @property
     def label(self) -> str:
+        self.property_only = "default"
         return "default"
 
     def rename(self, label: str):
