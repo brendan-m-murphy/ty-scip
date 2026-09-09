@@ -36,12 +36,12 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
     let caller = support::document(&decoded, "caller.py");
     let library = support::document(&decoded, "library.py");
 
-    let first = support::occurrence(library, &[4, 13, 18]);
-    let repeated = support::occurrence(library, &[7, 17, 22]);
-    let same_file_read = support::occurrence(library, &[10, 20, 25]);
+    let first = support::occurrence(library, &[18, 13, 18]);
+    let repeated = support::occurrence(library, &[21, 17, 22]);
+    let same_file_read = support::occurrence(library, &[24, 20, 25]);
     let cross_file_read = support::occurrence(caller, &[4, 8, 13]);
     let inherited_read = support::occurrence(caller, &[9, 20, 25]);
-    let class_variable = support::occurrence(library, &[1, 4, 9]);
+    let class_variable = support::occurrence(library, &[15, 4, 9]);
     assert!(first.symbol.contains("Counter#value."));
     for occurrence in [
         repeated,
@@ -56,7 +56,7 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
         first.symbol_roles,
         SymbolRole::Definition as i32 | SymbolRole::WriteAccess as i32
     );
-    assert_eq!(first.enclosing_range, [4, 8, 18]);
+    assert_eq!(first.enclosing_range, [18, 8, 18]);
     assert_eq!(
         repeated.symbol_roles,
         SymbolRole::Definition as i32 | SymbolRole::WriteAccess as i32
@@ -65,8 +65,8 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
     assert_eq!(cross_file_read.symbol_roles, SymbolRole::ReadAccess as i32);
     assert_eq!(inherited_read.symbol_roles, SymbolRole::ReadAccess as i32);
 
-    let property = support::occurrence(library, &[18, 8, 13]);
-    let property_assignment = support::occurrence(library, &[22, 13, 18]);
+    let property = support::occurrence(library, &[32, 8, 13]);
+    let property_assignment = support::occurrence(library, &[36, 13, 18]);
     let property_read = support::occurrence(caller, &[13, 9, 14]);
     assert!(
         property.symbol.contains("Labelled#label"),
@@ -84,7 +84,7 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
             .count(),
         3
     );
-    for range in [[13, 14, 21], [28, 15, 26]] {
+    for range in [[27, 14, 21], [42, 15, 26], [46, 15, 25], [50, 15, 28]] {
         assert!(
             !library
                 .occurrences
@@ -93,7 +93,9 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
         );
     }
     assert!(!library.symbols.iter().any(|symbol| {
-        symbol.symbol.contains("foreign") || symbol.symbol.contains("static_only")
+        ["foreign", "static_only", "class_only", "replaced_only"]
+            .iter()
+            .any(|name| symbol.symbol.contains(name))
     }));
     assert!(
         !caller
@@ -101,9 +103,19 @@ fn promotes_only_proven_instance_attributes_to_class_members() {
             .iter()
             .any(|occurrence| occurrence.range == [17, 16, 21])
     );
-    let other = support::occurrence(library, &[33, 13, 18]);
+    let other = support::occurrence(library, &[55, 13, 18]);
     assert!(other.symbol.contains("Other#value."));
     assert_ne!(other.symbol, first.symbol);
+
+    let decorated_assignment = support::occurrence(library, &[61, 13, 16]);
+    let decorated_read = support::occurrence(caller, &[21, 10, 13]);
+    assert!(decorated_assignment.symbol.contains("Decorated#tag."));
+    assert_eq!(decorated_read.symbol, decorated_assignment.symbol);
+    assert_eq!(
+        decorated_assignment.symbol_roles,
+        SymbolRole::Definition as i32 | SymbolRole::WriteAccess as i32
+    );
+    assert_eq!(decorated_read.symbol_roles, SymbolRole::ReadAccess as i32);
 
     fs::remove_file(index).expect("remove test index");
 }

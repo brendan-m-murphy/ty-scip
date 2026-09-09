@@ -23,7 +23,7 @@ use ty_python_core::{
 };
 use ty_python_semantic::{
     Db as SemanticDb, HasType, SemanticModel,
-    types::{PropertyAccessorRole, Type},
+    types::{MethodDecorator, PropertyAccessorRole, Type},
 };
 
 use crate::scip_emit::{
@@ -169,14 +169,15 @@ struct InstanceAttributeCandidate {
     name: String,
 }
 
-struct InstanceAttributeCandidates<'symbols> {
+struct InstanceAttributeCandidates<'symbols, 'db> {
     classes: Vec<(usize, Option<SymbolData>)>,
     callables: Vec<Option<SymbolData>>,
+    model: &'symbols SemanticModel<'db>,
     globals: &'symbols HashMap<TextRange, SymbolData>,
     candidates: HashMap<TextRange, InstanceAttributeCandidate>,
 }
 
-impl<'ast> SourceOrderVisitor<'ast> for InstanceAttributeCandidates<'_> {
+impl<'ast> SourceOrderVisitor<'ast> for InstanceAttributeCandidates<'_, '_> {
     fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
         match node {
             AnyNodeRef::StmtClassDef(class) => self.classes.push((
@@ -189,7 +190,13 @@ impl<'ast> SourceOrderVisitor<'ast> for InstanceAttributeCandidates<'_> {
                     .last()
                     .filter(|(callable_depth, _)| {
                         *callable_depth == self.callables.len()
-                            && function.decorator_list.is_empty()
+                            && function
+                                .inferred_type(self.model)
+                                .and_then(Type::as_function_literal)
+                                .and_then(|function| {
+                                    MethodDecorator::try_from_fn_type(self.model.db(), function)
+                                })
+                                == Some(MethodDecorator::None)
                     })
                     .and_then(|(_, class)| class.clone());
                 self.callables.push(class);
@@ -666,6 +673,7 @@ fn allocate_semantic_symbols<'db>(
     let mut attribute_candidates = InstanceAttributeCandidates {
         classes: Vec::new(),
         callables: Vec::new(),
+        model: &model,
         globals,
         candidates: HashMap::new(),
     };

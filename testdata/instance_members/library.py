@@ -1,3 +1,17 @@
+from typing import Callable, TypeVar
+
+
+Function = TypeVar("Function", bound=Callable[..., object])
+
+
+def identity(function: Function) -> Function:
+    return function
+
+
+def replace(function: Function) -> object:
+    return object()
+
+
 class Counter:
     value = 0
 
@@ -28,7 +42,21 @@ class Unsafe:
     def configure(target):
         target.static_only = 1
 
+    @classmethod
+    def construct(cls, target):
+        target.class_only = 1
+
+    @replace
+    def replaced(self, target):
+        target.replaced_only = 1
+
 
 class Other:
     def __init__(self):
         self.value = "other"
+
+
+class Decorated:
+    @identity
+    def __init__(self, tag: str):
+        self.tag = tag

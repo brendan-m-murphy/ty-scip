@@ -1,4 +1,4 @@
-from library import Counter, Labelled, Other
+from library import Counter, Decorated, Labelled, Other
 
 
 counter = Counter(1)
@@ -16,3 +16,7 @@ labelled.label
 
 def ambiguous(item: Counter | Other):
     return item.value
+
+
+decorated = Decorated("ready")
+decorated.tag
