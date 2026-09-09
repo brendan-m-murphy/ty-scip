@@ -16,7 +16,10 @@ use scip::types::{Index, Occurrence, PositionEncoding, SymbolInformation, Symbol
 use serde::Serialize;
 
 mod database;
-pub use database::{DatabaseStats, SqlDatabase, SqlReferencePage};
+pub use database::{
+    DatabaseStats, SqlDatabase, SqlReferencePage, SqlSelectionError, SqlSymbolCandidate,
+    SqlTestPage,
+};
 
 /// Default cap used by composite responses such as [`QueryIndex::context`].
 pub const DEFAULT_LIMIT: usize = 100;

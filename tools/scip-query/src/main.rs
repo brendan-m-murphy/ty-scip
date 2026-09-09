@@ -2,7 +2,7 @@ use std::{env, io, path::PathBuf, process::ExitCode};
 
 use scip_query::{
     Page, QueryIndex, RefDirection, ReferenceEvidence, ReferenceView, Resolution, SqlDatabase,
-    SymbolId, SymbolView,
+    SqlSelectionError, SymbolId, SymbolView,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -14,6 +14,7 @@ const USAGE: &str = r#"Usage:
   scip-query [--root PATH] [--limit N] INDEX.scip COMMAND ...
   scip-query sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both]
              [--path PREFIX] [--offset N] [--limit N]
+  scip-query sql-tests DATABASE SELECTOR [--path PREFIX] [--offset N] [--limit N]
   scip-query sql-stats DATABASE
 
 Commands:
@@ -28,6 +29,7 @@ Commands:
   build-db DATABASE
   sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both] [--path PREFIX]
            [--offset N] [--limit N]
+  sql-tests DATABASE SELECTOR [--path PREFIX] [--offset N] [--limit N]
   sql-stats DATABASE
 
 Selectors accept raw SCIP symbols and path-qualified names."#;
@@ -93,6 +95,13 @@ enum Command {
     SqlStats {
         database: PathBuf,
     },
+    SqlTests {
+        database: PathBuf,
+        selector: String,
+        path: String,
+        offset: usize,
+        limit: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,7 +161,12 @@ fn parse(args: Vec<String>) -> Result<ParseResult, String> {
         .get(position)
         .ok_or_else(|| "missing command".to_owned())?;
     let command = parse_command(name, &args[position + 1..], limit)?;
-    if index.is_none() && !matches!(command, Command::SqlRefs { .. } | Command::SqlStats { .. }) {
+    if index.is_none()
+        && !matches!(
+            command,
+            Command::SqlRefs { .. } | Command::SqlStats { .. } | Command::SqlTests { .. }
+        )
+    {
         return Err("missing SCIP index (--index INDEX.scip)".to_owned());
     }
     Ok(ParseResult::Run(Cli {
@@ -175,11 +189,11 @@ fn parse_command(name: &str, args: &[String], default_limit: usize) -> Result<Co
     while position < args.len() {
         match args[position].as_str() {
             "--limit" => limit = positive(&value(args, &mut position, "--limit")?, "limit")?,
-            "--path" if matches!(name, "find" | "refs" | "sql-refs") => {
+            "--path" if matches!(name, "find" | "refs" | "sql-refs" | "sql-tests") => {
                 path = Some(value(args, &mut position, "--path")?)
             }
             "--compact" if name == "refs" => compact = true,
-            "--offset" if name == "refs" || name == "sql-refs" => {
+            "--offset" if matches!(name, "refs" | "sql-refs" | "sql-tests") => {
                 offset = value(args, &mut position, "--offset")?
                     .parse::<usize>()
                     .map_err(|_| "offset must be a non-negative integer".to_owned())?;
@@ -263,6 +277,13 @@ fn parse_command(name: &str, args: &[String], default_limit: usize) -> Result<Co
         ("sql-stats", [database]) => Ok(Command::SqlStats {
             database: PathBuf::from(database),
         }),
+        ("sql-tests", [database, selector]) => Ok(Command::SqlTests {
+            database: PathBuf::from(database),
+            selector: selector.clone(),
+            path: path.unwrap_or_else(|| "tests/".to_owned()),
+            offset,
+            limit,
+        }),
         (known, _) if is_command(known) => Err(format!("wrong number of arguments for {known}")),
         _ => Err(format!("unknown command {name}")),
     }
@@ -280,6 +301,7 @@ fn is_command(value: &str) -> bool {
             | "affected"
             | "build-db"
             | "sql-refs"
+            | "sql-tests"
             | "sql-stats"
     )
 }
@@ -330,13 +352,39 @@ fn execute(cli: Cli) -> Result<u8, String> {
     {
         let database = SqlDatabase::open(database).map_err(|error| error.to_string())?;
         let (direction_name, direction) = ref_direction(*direction);
-        let (resolved, result) = database
-            .refs(selector, direction, path.as_deref(), *offset, *limit)
-            .map_err(|error| error.to_string())?;
+        let (resolved, result) =
+            match database.refs(selector, direction, path.as_deref(), *offset, *limit) {
+                Ok(result) => result,
+                Err(error) => return emit_sql_selection_failure("sql-refs", selector, error),
+            };
         emit(&json!({
             "command": "sql-refs",
             "database": database_path(&cli.command),
             "direction": direction_name,
+            "path": path,
+            "resolved": resolved,
+            "result": result,
+            "selector": selector,
+            "status": "ok",
+        }))?;
+        return Ok(0);
+    }
+    if let Command::SqlTests {
+        database,
+        selector,
+        path,
+        offset,
+        limit,
+    } = &cli.command
+    {
+        let sql = SqlDatabase::open(database).map_err(|error| error.to_string())?;
+        let (resolved, result) = match sql.tests(selector, path, *offset, *limit) {
+            Ok(result) => result,
+            Err(error) => return emit_sql_selection_failure("sql-tests", selector, error),
+        };
+        emit(&json!({
+            "command": "sql-tests",
+            "database": database,
             "path": path,
             "resolved": resolved,
             "result": result,
@@ -534,7 +582,9 @@ fn execute(cli: Cli) -> Result<u8, String> {
                 "status": "ok",
             }))?;
         }
-        Command::SqlRefs { .. } | Command::SqlStats { .. } => unreachable!(),
+        Command::SqlRefs { .. } | Command::SqlStats { .. } | Command::SqlTests { .. } => {
+            unreachable!()
+        }
     }
     Ok(0)
 }
@@ -549,9 +599,35 @@ fn ref_direction(direction: Direction) -> (&'static str, RefDirection) {
 
 fn database_path(command: &Command) -> Option<&PathBuf> {
     match command {
-        Command::SqlRefs { database, .. } | Command::SqlStats { database } => Some(database),
+        Command::SqlRefs { database, .. }
+        | Command::SqlStats { database }
+        | Command::SqlTests { database, .. } => Some(database),
         _ => None,
     }
+}
+
+fn emit_sql_selection_failure(
+    command: &str,
+    selector: &str,
+    error: Box<dyn std::error::Error + Send + Sync>,
+) -> Result<u8, String> {
+    let Some(selection) = error.downcast_ref::<SqlSelectionError>() else {
+        return Err(error.to_string());
+    };
+    match selection {
+        SqlSelectionError::Ambiguous { candidates, .. } => emit(&json!({
+            "candidates": candidates,
+            "command": command,
+            "selector": selector,
+            "status": "ambiguous",
+        }))?,
+        SqlSelectionError::NotFound { .. } => emit(&json!({
+            "command": command,
+            "selector": selector,
+            "status": "not_found",
+        }))?,
+    }
+    Ok(2)
 }
 
 enum SelectionFailure {
@@ -779,6 +855,29 @@ mod tests {
                 direction: Direction::Outgoing,
                 path: Some("tests/".into()),
                 offset: 2,
+                limit: DEFAULT_LIMIT,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_sql_tests_with_default_test_path() {
+        let ParseResult::Run(cli) = parse(vec![
+            "sql-tests".into(),
+            "cache.sqlite".into(),
+            "BaseStore".into(),
+        ])
+        .expect("parse") else {
+            panic!("expected runnable command");
+        };
+        assert_eq!(cli.index, None);
+        assert_eq!(
+            cli.command,
+            Command::SqlTests {
+                database: PathBuf::from("cache.sqlite"),
+                selector: "BaseStore".into(),
+                path: "tests/".into(),
+                offset: 0,
                 limit: DEFAULT_LIMIT,
             }
         );

@@ -40,6 +40,7 @@ scip-query --index INDEX.scip [--root PATH] [--limit N] path SOURCE TARGET [--ma
 scip-query --index INDEX.scip [--root PATH] [--limit N] affected SELECTOR [--max-depth N]
 scip-query --index INDEX.scip build-db DATABASE
 scip-query sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both] [--path PREFIX] [--offset N] [--limit N]
+scip-query sql-tests DATABASE SELECTOR [--path PREFIX] [--offset N] [--limit N]
 scip-query sql-stats DATABASE
 ```
 
@@ -82,7 +83,17 @@ selectors include bounded suggestions.
   index. It groups repeated occurrences with the same source, target, document,
   roles, and provenance, reporting their count and first location. The direct
   commands remain available for unmerged records and richer context.
+- `sql-tests` returns bounded test references to a class, its directly owned
+  members, and its SCIP implementation/type-definition subtypes. A method query
+  also includes its owning class and that class's subtypes. Its default path is
+  `tests/`; use `--path` for another test tree.
 - `sql-stats` reports cache row counts for parity checks.
+
+SQL queries collapse document-local import bindings onto the global symbol when
+SCIP emits both occurrences at the same source range. A bare imported name such
+as `BaseStore` therefore resolves without hiding genuine ambiguity between
+distinct global definitions. Ambiguous results contain qualified names,
+definition paths, kinds, and copy-paste-safe canonical symbols.
 
 For broad textual orientation, use `rg`, then hand an exact hit to SCIP rather
 than asking a natural-language graph query:

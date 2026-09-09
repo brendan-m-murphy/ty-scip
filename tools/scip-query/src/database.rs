@@ -2,10 +2,12 @@
 
 use std::collections::BTreeMap;
 use std::error::Error;
+use std::fmt;
 use std::path::Path;
 
 use protobuf::Message;
 use rusqlite::{Connection, OpenFlags, params};
+use scip::types::symbol_information;
 use serde::Serialize;
 
 use super::{QueryIndex, RefDirection, SourceRange, SymbolId};
@@ -138,6 +140,69 @@ pub struct SqlReferencePage {
     pub truncated: bool,
     pub next_offset: Option<usize>,
     pub items: Vec<SqlReferenceSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SqlSymbolCandidate {
+    pub canonical: String,
+    pub qualified_name: String,
+    pub display_name: String,
+    pub kinds: Vec<i32>,
+    pub definition: Option<String>,
+}
+
+#[derive(Debug)]
+pub enum SqlSelectionError {
+    NotFound {
+        selector: String,
+    },
+    Ambiguous {
+        selector: String,
+        candidates: Vec<SqlSymbolCandidate>,
+    },
+}
+
+impl fmt::Display for SqlSelectionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound { selector } => write!(formatter, "symbol not found: {selector}"),
+            Self::Ambiguous {
+                selector,
+                candidates,
+            } => write!(
+                formatter,
+                "ambiguous symbol {selector}: {}",
+                candidates
+                    .iter()
+                    .map(|candidate| candidate.qualified_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
+
+impl Error for SqlSelectionError {}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SqlTestSummary {
+    pub document: String,
+    pub line: Option<i64>,
+    pub column: Option<i64>,
+    pub target: String,
+    pub match_kind: String,
+    pub roles: Vec<String>,
+    pub occurrences: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SqlTestPage {
+    pub total: usize,
+    pub offset: usize,
+    pub returned: usize,
+    pub truncated: bool,
+    pub next_offset: Option<usize>,
+    pub items: Vec<SqlTestSummary>,
 }
 
 impl QueryIndex {
@@ -345,6 +410,21 @@ struct ReferenceGroup {
     count: usize,
 }
 
+#[derive(Clone, Debug)]
+struct ResolvedCandidate {
+    id: i64,
+    local: bool,
+    view: SqlSymbolCandidate,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct TestKey {
+    document: String,
+    target: String,
+    match_kind: String,
+    roles_json: String,
+}
+
 impl SqlDatabase {
     pub fn open(path: &Path) -> Result<Self> {
         let connection = Connection::open_with_flags(
@@ -433,6 +513,129 @@ impl SqlDatabase {
         ))
     }
 
+    pub fn tests(
+        &self,
+        selector: &str,
+        path_prefix: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(String, SqlTestPage)> {
+        let (symbol_id, resolved) = self.resolve(selector)?;
+        let owner = self.class_owner(symbol_id)?;
+        let root = owner.unwrap_or(symbol_id);
+        let mut targets = BTreeMap::from([(symbol_id, "symbol")]);
+        if owner.is_some() {
+            targets.insert(root, "owner");
+        }
+
+        if owner.is_none() {
+            let mut members = self.connection.prepare(
+                "SELECT DISTINCT symbol_id FROM occurrences
+                 WHERE owner_symbol_id=? AND symbol_id<>owner_symbol_id AND roles & 1 != 0",
+            )?;
+            for member in members
+                .query_map([root], |row| row.get::<_, i64>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+            {
+                targets.entry(member).or_insert("member");
+            }
+        }
+
+        let mut subtypes = self.connection.prepare(
+            "SELECT DISTINCT source_symbol_id FROM relationships
+             WHERE target_symbol_id=? AND (is_implementation OR is_type_definition)",
+        )?;
+        for subtype in subtypes
+            .query_map([root], |row| row.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        {
+            targets.entry(subtype).or_insert("subtype");
+        }
+
+        let mut query = self.connection.prepare(
+            "SELECT d.path,o.start_line,o.start_character,o.role_names_json,s.qualified_name
+             FROM occurrences o
+             JOIN documents d ON d.id=o.document_id
+             JOIN symbols s ON s.id=o.symbol_id
+             WHERE o.symbol_id=? AND d.path LIKE ? || '%'",
+        )?;
+        let mut groups = BTreeMap::<TestKey, ReferenceGroup>::new();
+        for (target, match_kind) in targets {
+            let rows = query.query_map(params![target, path_prefix], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })?;
+            for row in rows {
+                let (document, line, column, roles_json, target) = row?;
+                let key = TestKey {
+                    document,
+                    target,
+                    match_kind: match_kind.to_owned(),
+                    roles_json,
+                };
+                let group = groups.entry(key).or_insert(ReferenceGroup {
+                    line,
+                    column,
+                    count: 0,
+                });
+                group.line = group.line.min(line).or(group.line).or(line);
+                group.column = group.column.min(column).or(group.column).or(column);
+                group.count += 1;
+            }
+        }
+
+        let items: Vec<_> = groups
+            .into_iter()
+            .map(|(key, group)| SqlTestSummary {
+                document: key.document,
+                line: group.line.map(|value| value + 1),
+                column: group.column.map(|value| value + 1),
+                target: key.target,
+                match_kind: key.match_kind,
+                roles: serde_json::from_str(&key.roles_json).unwrap_or_default(),
+                occurrences: group.count,
+            })
+            .collect();
+        let total = items.len();
+        let items: Vec<_> = items.into_iter().skip(offset).take(limit).collect();
+        let returned = items.len();
+        let next_offset = (offset + returned < total).then_some(offset + returned);
+        Ok((
+            resolved,
+            SqlTestPage {
+                total,
+                offset,
+                returned,
+                truncated: next_offset.is_some(),
+                next_offset,
+                items,
+            },
+        ))
+    }
+
+    fn class_owner(&self, symbol_id: i64) -> Result<Option<i64>> {
+        let mut statement = self.connection.prepare(
+            "SELECT DISTINCT owner.id,owner.kinds_json
+             FROM occurrences definition
+             JOIN symbols owner ON owner.id=definition.owner_symbol_id
+             WHERE definition.symbol_id=? AND definition.roles & 1 != 0",
+        )?;
+        let owners: Vec<(i64, String)> = statement
+            .query_map([symbol_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(owners.into_iter().find_map(|(id, kinds)| {
+            serde_json::from_str::<Vec<i32>>(&kinds)
+                .unwrap_or_default()
+                .contains(&(symbol_information::Kind::Class as i32))
+                .then_some(id)
+        }))
+    }
+
     fn resolve(&self, selector: &str) -> Result<(i64, String)> {
         let alias = selector
             .rsplit_once('#')
@@ -441,31 +644,109 @@ impl SqlDatabase {
                 || selector.to_owned(),
                 |(owner, member)| format!("{owner}.{member}"),
             );
-        let mut statement = self.connection.prepare(
-            "SELECT id, qualified_name FROM symbols
-             WHERE canonical=?1 OR scip_symbol=?1 OR qualified_name=?1 OR qualified_name=?2
-                OR qualified_name LIKE '%.' || ?2 OR display_name=?2
-             ORDER BY CASE WHEN qualified_name=?2 THEN 0 ELSE 1 END, canonical",
+        let exact = self.candidates(
+            "canonical=?1 OR scip_symbol=?1 OR qualified_name=?1 OR qualified_name=?2",
+            selector,
+            &alias,
         )?;
-        let candidates: Vec<(i64, String)> = statement
-            .query_map(params![selector, alias], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        match candidates.as_slice() {
-            [candidate] => Ok(candidate.clone()),
-            [] => Err(format!("symbol not found: {selector}").into()),
-            _ => Err(format!(
-                "ambiguous symbol {selector}: {}",
-                candidates
+        if let [candidate] = exact.as_slice() {
+            return Ok((candidate.id, candidate.view.qualified_name.clone()));
+        }
+
+        let candidates = if exact.is_empty() {
+            self.candidates(
+                "substr(qualified_name, -length(?2)-1)='.' || ?2 OR display_name=?2",
+                selector,
+                &alias,
+            )?
+        } else {
+            exact
+        };
+        let mut resolved = BTreeMap::new();
+        for candidate in candidates {
+            let candidate = self.import_target(&candidate)?.unwrap_or(candidate);
+            resolved.entry(candidate.id).or_insert(candidate);
+        }
+        if resolved.values().any(|candidate| !candidate.local) {
+            resolved.retain(|_, candidate| !candidate.local);
+        }
+        match resolved.into_values().collect::<Vec<_>>().as_slice() {
+            [candidate] => Ok((candidate.id, candidate.view.qualified_name.clone())),
+            [] => Err(SqlSelectionError::NotFound {
+                selector: selector.to_owned(),
+            }
+            .into()),
+            candidates => Err(SqlSelectionError::Ambiguous {
+                selector: selector.to_owned(),
+                candidates: candidates
                     .iter()
                     .take(8)
-                    .map(|value| value.1.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
+                    .map(|candidate| candidate.view.clone())
+                    .collect(),
+            }
             .into()),
         }
+    }
+
+    fn candidates(
+        &self,
+        predicate: &str,
+        selector: &str,
+        alias: &str,
+    ) -> Result<Vec<ResolvedCandidate>> {
+        let sql = format!(
+            "SELECT s.id,s.identity_document,s.canonical,s.qualified_name,s.display_name,s.kinds_json,
+                    (SELECT MIN(d.path) FROM occurrences o
+                     JOIN documents d ON d.id=o.document_id
+                     WHERE o.symbol_id=s.id AND o.roles & 1 != 0)
+             FROM symbols s WHERE ({predicate}) AND ?2 IS NOT NULL ORDER BY s.canonical"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        Ok(statement
+            .query_map(params![selector, alias], |row| {
+                let identity_document: String = row.get(1)?;
+                let kinds_json: String = row.get(5)?;
+                Ok(ResolvedCandidate {
+                    id: row.get(0)?,
+                    local: !identity_document.is_empty(),
+                    view: SqlSymbolCandidate {
+                        canonical: row.get(2)?,
+                        qualified_name: row.get(3)?,
+                        display_name: row.get(4)?,
+                        kinds: serde_json::from_str(&kinds_json).unwrap_or_default(),
+                        definition: row.get(6)?,
+                    },
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    fn import_target(&self, candidate: &ResolvedCandidate) -> Result<Option<ResolvedCandidate>> {
+        let mut statement = self.connection.prepare(
+            "SELECT DISTINCT target.symbol_id
+             FROM occurrences alias
+             JOIN symbols alias_symbol ON alias_symbol.id=alias.symbol_id
+             JOIN occurrences target
+               ON target.document_id=alias.document_id
+              AND target.start_line IS alias.start_line
+              AND target.start_character IS alias.start_character
+              AND target.end_line IS alias.end_line
+              AND target.end_character IS alias.end_character
+             JOIN symbols target_symbol ON target_symbol.id=target.symbol_id
+             WHERE alias.symbol_id=? AND alias_symbol.identity_document<>''
+               AND alias.roles & 3 = 3 AND target.roles & 2 != 0
+               AND target_symbol.identity_document='' AND target.symbol_id<>alias.symbol_id",
+        )?;
+        let targets: Vec<i64> = statement
+            .query_map([candidate.id], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let [target] = targets.as_slice() else {
+            return Ok(None);
+        };
+        Ok(self
+            .candidates("s.id=?1", &target.to_string(), "")?
+            .into_iter()
+            .next())
     }
 
     fn occurrence_groups(

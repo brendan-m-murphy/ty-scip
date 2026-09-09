@@ -17,6 +17,7 @@ const BETA_RUN: &str = "example package demo 1.0 pkg/Beta#run().";
 const BASE: &str = "example package demo 1.0 pkg/Base#";
 const HELPER: &str = "example package demo 1.0 pkg/helper().";
 const LEAF: &str = "example package demo 1.0 pkg/leaf().";
+const TEST_ALPHA: &str = "example package demo 1.0 tests/TestAlpha#";
 
 static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
 
@@ -33,6 +34,7 @@ impl Fixture {
             NEXT_DIR.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join("pkg")).unwrap();
+        fs::create_dir_all(root.join("tests")).unwrap();
         fs::write(
             root.join("pkg/models.py"),
             "class Alpha:\n    def run(self):\n        helper()\n        leaf()\n\nclass Beta:\n    def run(self):\n        helper()\n",
@@ -46,6 +48,11 @@ impl Fixture {
         fs::write(root.join("pkg/util.py"), "def helper():\n    leaf()\n").unwrap();
         fs::write(root.join("pkg/leaf.py"), "def leaf():\n    return 1\n").unwrap();
         fs::write(root.join("pkg/other.py"), "value = 1\nprint(value)\n").unwrap();
+        fs::write(
+            root.join("tests/test_models.py"),
+            "from pkg import Alpha\n\ndef test_alpha():\n    value = Alpha()\n    value.run()\n\nclass TestAlpha(Alpha):\n    pass\n",
+        )
+        .unwrap();
 
         let index = root.join("index.scip");
         fs::write(&index, synthetic_index().write_to_bytes().unwrap()).unwrap();
@@ -144,6 +151,13 @@ fn synthetic_index() -> Index {
     alpha_run.enclosing_symbol = ALPHA.into();
     let mut beta_run = info(BETA_RUN, "run", symbol_information::Kind::Method);
     beta_run.enclosing_symbol = BETA.into();
+    let mut test_alpha = info(TEST_ALPHA, "TestAlpha", symbol_information::Kind::Class);
+    test_alpha.relationships.push(Relationship {
+        symbol: ALPHA.into(),
+        is_implementation: true,
+        is_type_definition: true,
+        ..Default::default()
+    });
 
     let duplicate = reference(HELPER, &[2, 8, 14], SymbolRole::ReadAccess as i32);
     Index {
@@ -196,6 +210,33 @@ fn synthetic_index() -> Index {
                 occurrences: vec![
                     definition("local 0", &[0, 0, 5], &[0, 0, 2, 0]),
                     reference("local 0", &[1, 6, 11], SymbolRole::ReadAccess as i32),
+                ],
+                ..Default::default()
+            },
+            Document {
+                relative_path: "tests/test_models.py".into(),
+                symbols: vec![
+                    info("local 0", "Alpha", symbol_information::Kind::Variable),
+                    info("local 1", "Model", symbol_information::Kind::Variable),
+                    test_alpha,
+                ],
+                occurrences: vec![
+                    reference(ALPHA, &[0, 16, 21], SymbolRole::Import as i32),
+                    reference(
+                        "local 0",
+                        &[0, 16, 21],
+                        SymbolRole::Definition as i32 | SymbolRole::Import as i32,
+                    ),
+                    reference(ALPHA, &[0, 16, 21], SymbolRole::Import as i32),
+                    reference(
+                        "local 1",
+                        &[0, 16, 21],
+                        SymbolRole::Definition as i32 | SymbolRole::Import as i32,
+                    ),
+                    reference(ALPHA, &[3, 12, 17], SymbolRole::ReadAccess as i32),
+                    reference(ALPHA_RUN, &[4, 10, 13], SymbolRole::ReadAccess as i32),
+                    definition(TEST_ALPHA, &[6, 6, 15], &[6, 0, 8, 0]),
+                    reference(ALPHA, &[6, 16, 21], SymbolRole::ReadAccess as i32),
                 ],
                 ..Default::default()
             },
@@ -445,9 +486,9 @@ fn sqlite_cache_preserves_facts_and_groups_reference_occurrences() {
     let database_text = database.to_str().unwrap();
 
     let built = fixture.success(&["build-db", database_text]);
-    assert_eq!(built["result"]["documents"], 5);
-    assert_eq!(built["result"]["occurrences"], 15);
-    assert_eq!(built["result"]["relationships"], 1);
+    assert_eq!(built["result"]["documents"], 6);
+    assert_eq!(built["result"]["occurrences"], 23);
+    assert_eq!(built["result"]["relationships"], 2);
 
     let stats = fixture.success(&["sql-stats", database_text]);
     assert_eq!(stats["result"], built["result"]);
@@ -477,5 +518,63 @@ fn sqlite_cache_preserves_facts_and_groups_reference_occurrences() {
         item["target"] == "pkg.Base"
             && item["relationship"]["is_implementation"] == true
             && item["provenance"] == "scip_relationship"
+    }));
+}
+
+#[test]
+fn sqlite_resolves_import_aliases_and_projects_tests() {
+    let fixture = Fixture::new();
+    let database = fixture.root.join("lossless.sqlite");
+    let database_text = database.to_str().unwrap();
+    fixture.success(&["build-db", database_text]);
+
+    let refs = fixture.success(&[
+        "sql-refs",
+        database_text,
+        "Alpha",
+        "--incoming",
+        "--path",
+        "tests/",
+    ]);
+    assert_eq!(refs["resolved"], "pkg.Alpha");
+    assert!(
+        result_items(&refs)
+            .iter()
+            .any(|item| item["document"] == "tests/test_models.py")
+    );
+
+    let alias = fixture.success(&["sql-refs", database_text, "Model", "--incoming"]);
+    assert_eq!(alias["resolved"], "pkg.Alpha");
+
+    let ambiguous = fixture.json(&["sql-refs", database_text, "run"], 2);
+    assert_eq!(ambiguous["status"], "ambiguous");
+    assert_eq!(ambiguous["candidates"].as_array().unwrap().len(), 2);
+
+    let tests = fixture.success(&["sql-tests", database_text, "Alpha", "--limit", "10"]);
+    assert_eq!(tests["resolved"], "pkg.Alpha");
+    let items = result_items(&tests);
+    assert!(
+        items
+            .iter()
+            .all(|item| item["document"] == "tests/test_models.py")
+    );
+    assert!(items.iter().any(|item| item["match_kind"] == "symbol"));
+    assert!(
+        items
+            .iter()
+            .any(|item| { item["match_kind"] == "member" && item["target"] == "pkg.Alpha.run" })
+    );
+    assert!(
+        items
+            .iter()
+            .any(|item| { item["match_kind"] == "subtype" && item["target"] == "tests.TestAlpha" })
+    );
+
+    let method_tests =
+        fixture.success(&["sql-tests", database_text, "pkg.Alpha#run", "--limit", "10"]);
+    assert!(result_items(&method_tests).iter().any(|item| {
+        item["match_kind"] == "owner"
+            && item["target"] == "pkg.Alpha"
+            && item["document"] == "tests/test_models.py"
     }));
 }
