@@ -26,15 +26,18 @@ fn supports_public_command_line_conventions() {
     assert_eq!(
         String::from_utf8_lossy(&help.stdout),
         concat!(
-            "Usage: ty-scip [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]\n",
+            "Usage: ty-scip [index] [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]\n",
             "\n",
             "Indexes a Python project into index.scip by default.\n",
             "\n",
             "Options:\n",
-            "  --project-name NAME       Override the SCIP package name\n",
-            "  --project-version VERSION Override the SCIP package version\n",
-            "  -h, --help                Print help\n",
-            "  -V, --version             Print version\n",
+            "  --output PATH              Write the index to PATH\n",
+            "  --cwd PATH                 Resolve relative paths from PATH\n",
+            "  --quiet                    Suppress indexing diagnostics\n",
+            "  --project-name NAME        Override the SCIP package name\n",
+            "  --project-version VERSION  Override the SCIP package version\n",
+            "  -h, --help                 Print help\n",
+            "  -V, --version              Print version\n",
         )
     );
     assert!(help.stderr.is_empty());
@@ -121,6 +124,59 @@ fn supports_public_command_line_conventions() {
     );
 
     for directory in [zero_argument_project, caller, target] {
+        fs::remove_dir_all(directory).expect("remove temporary project");
+    }
+}
+
+#[test]
+fn supports_scip_python_style_index_command() {
+    let binary = env!("CARGO_BIN_EXE_ty-scip");
+    let caller = project("compat-caller");
+    let target = project("compat-target");
+
+    let indexed = Command::new(binary)
+        .current_dir(&caller)
+        .args(["index", "--cwd"])
+        .arg(&target)
+        .args(["--output", "custom.scip", "--quiet"])
+        .output()
+        .expect("index with compatible command shape");
+    assert!(
+        indexed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&indexed.stderr)
+    );
+    assert!(indexed.stdout.is_empty());
+    assert!(indexed.stderr.is_empty());
+    assert!(target.join("custom.scip").is_file());
+
+    let conflict = Command::new(binary)
+        .args([
+            "index",
+            "project",
+            "positional.scip",
+            "--output",
+            "option.scip",
+        ])
+        .output()
+        .expect("reject two output destinations");
+    assert!(!conflict.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&conflict.stderr).trim(),
+        "ty-scip: cannot use positional OUTPUT.scip with --output"
+    );
+
+    let unsupported = Command::new(binary)
+        .args(["index", "--environment", "venv"])
+        .output()
+        .expect("reject unsupported scip-python option");
+    assert!(!unsupported.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&unsupported.stderr).trim(),
+        "ty-scip: unknown option --environment; try `ty-scip --help`"
+    );
+
+    for directory in [caller, target] {
         fs::remove_dir_all(directory).expect("remove temporary project");
     }
 }

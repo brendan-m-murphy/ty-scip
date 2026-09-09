@@ -1,9 +1,14 @@
-use std::{env, ffi::OsString, path::PathBuf, process};
+use std::{
+    env,
+    ffi::{OsStr, OsString},
+    path::PathBuf,
+    process,
+};
 
 mod scip_emit;
 mod ty_index;
 
-const USAGE: &str = "Usage: ty-scip [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]\n\nIndexes a Python project into index.scip by default.\n\nOptions:\n  --project-name NAME       Override the SCIP package name\n  --project-version VERSION Override the SCIP package version\n  -h, --help                Print help\n  -V, --version             Print version";
+const USAGE: &str = "Usage: ty-scip [index] [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]\n\nIndexes a Python project into index.scip by default.\n\nOptions:\n  --output PATH              Write the index to PATH\n  --cwd PATH                 Resolve relative paths from PATH\n  --quiet                    Suppress indexing diagnostics\n  --project-name NAME        Override the SCIP package name\n  --project-version VERSION  Override the SCIP package version\n  -h, --help                 Print help\n  -V, --version              Print version";
 
 fn main() {
     if let Err(error) = run() {
@@ -15,10 +20,19 @@ fn main() {
 fn run() -> Result<(), String> {
     let caller_directory = env::current_dir()
         .map_err(|error| format!("cannot determine the current directory: {error}"))?;
-    let mut arguments = env::args_os().skip(1);
+    let mut arguments = env::args_os().skip(1).peekable();
+    if arguments
+        .peek()
+        .is_some_and(|argument| argument == OsStr::new("index"))
+    {
+        arguments.next();
+    }
     let mut positionals = Vec::new();
     let mut project_name = None;
     let mut project_version = None;
+    let mut output_option = None;
+    let mut cwd = None;
+    let mut quiet = false;
     let mut options = true;
     while let Some(argument) = arguments.next() {
         let text = argument.to_str();
@@ -36,6 +50,18 @@ fn run() -> Result<(), String> {
                     println!("ty-scip {}", env!("CARGO_PKG_VERSION"));
                     return Ok(());
                 }
+                Some("--output") => {
+                    output_option = Some(path_option_value("--output", arguments.next())?);
+                    continue;
+                }
+                Some("--cwd") => {
+                    cwd = Some(path_option_value("--cwd", arguments.next())?);
+                    continue;
+                }
+                Some("--quiet") => {
+                    quiet = true;
+                    continue;
+                }
                 Some("--project-name") => {
                     project_name = Some(option_value("--project-name", arguments.next())?);
                     continue;
@@ -52,6 +78,14 @@ fn run() -> Result<(), String> {
                     project_version = Some(value["--project-version=".len()..].to_owned());
                     continue;
                 }
+                Some(value) if value.starts_with("--output=") => {
+                    output_option = Some(PathBuf::from(&value["--output=".len()..]));
+                    continue;
+                }
+                Some(value) if value.starts_with("--cwd=") => {
+                    cwd = Some(PathBuf::from(&value["--cwd=".len()..]));
+                    continue;
+                }
                 Some(value) if value.starts_with('-') => {
                     return Err(format!("unknown option {value}; try `ty-scip --help`"));
                 }
@@ -63,6 +97,22 @@ fn run() -> Result<(), String> {
     if positionals.len() > 2 {
         return Err(format!("expected at most two arguments\n{USAGE}"));
     }
+    if output_option.is_some() && positionals.get(1).is_some() {
+        return Err("cannot use positional OUTPUT.scip with --output".to_owned());
+    }
+
+    let working_directory = cwd.map_or_else(
+        || Ok(caller_directory.clone()),
+        |path| {
+            let path = if path.is_absolute() {
+                path
+            } else {
+                caller_directory.join(path)
+            };
+            path.canonicalize()
+                .map_err(|error| format!("cannot resolve --cwd {}: {error}", path.display()))
+        },
+    )?;
 
     let sample_limit = match env::var("TY_SCIP_SAMPLE_LIMIT") {
         Ok(value) => value
@@ -72,20 +122,36 @@ fn run() -> Result<(), String> {
         Err(error) => return Err(format!("invalid TY_SCIP_SAMPLE_LIMIT: {error}")),
     };
     let root = positionals.first().map_or_else(
-        || Ok(caller_directory.clone()),
+        || Ok(working_directory.clone()),
         |path| {
             let path = PathBuf::from(path);
+            let path = if path.is_absolute() {
+                path
+            } else {
+                working_directory.join(path)
+            };
             path.canonicalize()
                 .map_err(|error| format!("cannot resolve project path {}: {error}", path.display()))
         },
     )?;
-    let output = positionals
-        .get(1)
-        .map_or_else(|| caller_directory.join("index.scip"), PathBuf::from);
+    let output = output_option
+        .or_else(|| positionals.get(1).map(PathBuf::from))
+        .map_or_else(
+            || working_directory.join("index.scip"),
+            |path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    working_directory.join(path)
+                }
+            },
+        );
 
     let index = ty_index::index(root, sample_limit, project_name, project_version)?;
-    for sample in &index.samples {
-        eprintln!("{sample}");
+    if !quiet {
+        for sample in &index.samples {
+            eprintln!("{sample}");
+        }
     }
 
     let mut references = 0;
@@ -122,24 +188,32 @@ fn run() -> Result<(), String> {
         .sum::<usize>();
     scip_emit::write_index(&index.root, &output, &index.files, &index.edges)
         .map_err(|error| format!("cannot write SCIP index {}: {error}", output.display()))?;
-    eprintln!(
-        "indexed {} files: {definitions} definitions, {references} references; \
-         {} unresolved, {} ambiguous, {} external, {} skipped \
-         ({skipped_cross_file_locals} cross-file local, {skipped_missing_symbols} missing symbol)",
-        index.files.len(),
-        index.unresolved,
-        index.ambiguous,
-        index.external,
-        skipped_cross_file_locals + skipped_missing_symbols,
-    );
-    if index.syntax_errors != 0 || index.unsupported_syntax_errors != 0 {
+    if !quiet {
         eprintln!(
-            "{} syntax errors, {} unsupported syntax errors",
-            index.syntax_errors, index.unsupported_syntax_errors
+            "indexed {} files: {definitions} definitions, {references} references; \
+             {} unresolved, {} ambiguous, {} external, {} skipped \
+             ({skipped_cross_file_locals} cross-file local, {skipped_missing_symbols} missing symbol)",
+            index.files.len(),
+            index.unresolved,
+            index.ambiguous,
+            index.external,
+            skipped_cross_file_locals + skipped_missing_symbols,
         );
+        if index.syntax_errors != 0 || index.unsupported_syntax_errors != 0 {
+            eprintln!(
+                "{} syntax errors, {} unsupported syntax errors",
+                index.syntax_errors, index.unsupported_syntax_errors
+            );
+        }
     }
 
     Ok(())
+}
+
+fn path_option_value(option: &str, value: Option<OsString>) -> Result<PathBuf, String> {
+    value
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("{option} requires a value"))
 }
 
 fn option_value(option: &str, value: Option<OsString>) -> Result<String, String> {

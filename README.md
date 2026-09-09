@@ -39,7 +39,7 @@ cargo install --locked --path .
 ## Use
 
 ```console
-ty-scip [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]
+ty-scip [index] [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]
 ```
 
 With no arguments, `ty-scip` indexes the current directory and writes
@@ -50,6 +50,9 @@ written as `index.scip` in the caller's current directory.
 # Current project -> ./index.scip
 ty-scip
 
+# scip-python-style command -> ./index.scip
+ty-scip index . --output index.scip
+
 # Another project discovery path -> explicit output
 ty-scip ../project ./project.scip
 
@@ -59,6 +62,10 @@ ty-scip --project-name example --project-version 1.2.3 ../project
 
 Options:
 
+- `--output PATH`: write the index to `PATH`; cannot be combined with the
+  positional output path.
+- `--cwd PATH`: resolve relative project and output paths from `PATH`.
+- `--quiet`: suppress successful-run diagnostics; errors still go to stderr.
 - `--project-name NAME`: override the SCIP package name.
 - `--project-version VERSION`: override the SCIP package version.
 - `-h`, `--help`: print help.
@@ -78,6 +85,9 @@ behavior come from ty. Configure them with `ty.toml` or `[tool.ty]` in
 but ty does not traverse symlinked directories. Package name and version come
 from the command-line overrides first, then static PEP 621 `[project]`
 metadata, then an empty deterministic fallback.
+
+See [migrating from scip-python](docs/migration-from-scip-python.md) for the
+supported command mapping and deliberately unsupported options.
 
 ## What it indexes
 
