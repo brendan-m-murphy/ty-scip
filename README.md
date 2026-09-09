@@ -2,7 +2,7 @@
 
 `ty-scip` is an experimental SCIP indexer for Python. It turns ty's Python
 project model and semantic navigation results into a deterministic index that
-works with existing SCIP tooling.
+is tested with SCIP 0.10 and the SCIP 0.8-based `scip-cli` 2.7 conversion path.
 
 The indexer is written in Rust because ty and Ruff expose the required parser,
 project, and semantic APIs as Rust crates. `ty-scip` consumes those crates
@@ -39,7 +39,7 @@ cargo install --locked --path .
 ## Use
 
 ```console
-ty-scip [OPTIONS] [PROJECT_ROOT] [OUTPUT.scip]
+ty-scip [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]
 ```
 
 With no arguments, `ty-scip` indexes the current directory and writes
@@ -50,7 +50,7 @@ written as `index.scip` in the caller's current directory.
 # Current project -> ./index.scip
 ty-scip
 
-# Another project -> explicit output
+# Another project discovery path -> explicit output
 ty-scip ../project ./project.scip
 
 # Override the package identity recorded in global symbols
@@ -70,11 +70,14 @@ links, and parser diagnostics is written to stderr. Set
 `TY_SCIP_SAMPLE_LIMIT=N` to include up to `N` deterministic examples from each
 unresolved and ambiguous category.
 
+The positional project path is where ty starts configuration discovery; an
+ancestor `ty.toml` or `pyproject.toml` may determine the actual project root.
 Project discovery, source selection, import resolution, and Python-environment
 behavior come from ty. Configure them with `ty.toml` or `[tool.ty]` in
-`pyproject.toml`; Pyright configuration is not read. Package name and version
-come from the command-line overrides first, then static PEP 621
-`[project]` metadata, then an empty deterministic fallback.
+`pyproject.toml`; Pyright configuration is not read. File symlinks are selected,
+but ty does not traverse symlinked directories. Package name and version come
+from the command-line overrides first, then static PEP 621 `[project]`
+metadata, then an empty deterministic fallback.
 
 ## What it indexes
 
@@ -85,6 +88,8 @@ The current index includes:
   fields, variables, imports, and function-local bindings;
 - unambiguous first-party name, attribute, import, re-export, and keyword
   references;
+- analyzer-confirmed names inside quoted annotations, without scanning
+  ordinary string contents;
 - normalization of overloads and repeated definitions that denote one binding;
 - generated dataclass/NamedTuple/TypedDict constructor fields and TypedDict
   string-key reads when ty resolves them to declared fields;

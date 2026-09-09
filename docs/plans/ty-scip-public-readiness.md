@@ -298,3 +298,16 @@ first-target heuristic.
   and are classified as SCIP type aliases. Inferred signatures for ordinary
   assignments and syntax-matched legacy aliases remain deferred because hover
   is not a structured declaration API and can report definition-site literals.
+- **2026-09-09:** Reused public semantic tokens to add only analyzer-confirmed
+  symbol ranges nested inside string literals to the existing declaration
+  resolver. Quoted unions, nested generics, and return annotations now link;
+  `Literal` values, ordinary strings, `__slots__`, and concatenated strings do
+  not. No string content is parsed or guessed, matching the useful
+  `scip-python` behavior in a direct focused comparison.
+- **2026-09-09:** Audited source-release reliability. CLI help now names its
+  first positional argument `PROJECT_PATH`, because ty may discover an ancestor
+  project root; write errors include the destination path. A Unix regression
+  records pinned ty's project policy: file symlinks are selected, directory
+  symlinks are not traversed. Project-walk diagnostics remain a private ty API,
+  so a complete-index guarantee requires an upstream visibility change rather
+  than a duplicate filesystem walker.

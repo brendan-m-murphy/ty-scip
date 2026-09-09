@@ -36,7 +36,7 @@ plan.
 | Global definitions | Modules, classes, functions, methods, constructors, variables, constants, properties, fields, and type parameters | Broadly supported |
 | Callable parameters | Stable global symbols beneath named callables | Supported, including Pyright's deeper callable model |
 | Local definitions | Deterministic semantic bindings, including unused and repeated definitions | Broadly supported, including nested constructs |
-| First-party references | Unambiguous names, attributes, imports, re-exports, and keyword arguments | Broadly supported |
+| First-party references | Unambiguous names, attributes, imports, re-exports, keyword arguments, and analyzer-confirmed names inside quoted annotations | Broadly supported |
 | Overloads and repeated definitions | Co-definitions normalize when they resolve to one durable symbol | Supported through Pyright declaration identity |
 | Instance attributes | Promoted when ty proves a receiver attribute in a direct method with normal inferred receiver semantics, including identity-preserving decorators; inherited reads resolve | Broader handling through Pyright's class/member model |
 | Imports and aliases | Relative, aliased, dotted, submodule, and `__init__.py` re-export targets when unambiguous; dynamic/wildcard edge cases are not claimed | More mature import, alias, and re-export handling |
@@ -103,7 +103,7 @@ Known conservative omissions include:
 - receiver attributes in class/static/property methods or decorators that
   replace the function, where a `self`/`cls` assumption would be false;
 - genuinely dynamic attributes and imports;
-- string references such as string annotations, pytest fixture names, and
+- string references that are not annotations, such as pytest fixture names and
   `__slots__` entries;
 - method-override, type-definition, external-base, and dynamic-base
   relationships;
@@ -130,7 +130,7 @@ blindly reimplemented:
 
 | API or evidence | Useful capability | Current decision |
 | --- | --- | --- |
-| `semantic_tokens` | Precise token ranges and modifiers, including some string annotations | Deferred: it does not provide durable targets or read/write roles by itself |
+| `semantic_tokens` | Precise token ranges and modifiers, including some string annotations | Analyzer-confirmed token ranges inside string literals are passed to declaration resolution; tokens alone are never treated as durable targets |
 | `find_references` and document highlights | Reference and local read/write evidence | Keep as fixture/oracle tools; Ruff syntax contexts provide production roles without reverse workspace scans |
 | `type_hierarchy_supertypes` | Direct base-class information | Used once per indexed class to emit first-party implementation relationships |
 | `goto_implementation` | Implementation targets | Not used: its reverse, per-cursor project scan is unsuitable for bulk override indexing |
@@ -158,8 +158,9 @@ The Cargo package is
 marked `publish = false`, the ty/Ruff dependencies are pinned Git crates, and
 there are no release binaries. macOS is exercised locally; Windows behavior
 is not claimed until file-URI and replacement-rename behavior are tested in
-CI. A project license, third-party notices, and CI are required before calling
-the repository release-ready.
+CI. A project license, locked transitive third-party notice inventory, and an
+automated SCIP consumer gate are required before calling the repository
+release-ready.
 
 The pinned crates have no external API-stability guarantee. Pin updates are
 deliberate compatibility work, not routine dependency bumps.
