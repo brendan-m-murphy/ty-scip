@@ -96,6 +96,12 @@ supported command mapping and deliberately unsupported options.
 
 ## Repository tools
 
+The experimental [lossless SCIP query tool](tools/scip-query/README.md) reads
+the protobuf directly and exposes exact symbol lookup, positions, references,
+members, bounded context, and evidence-backed traversal as deterministic JSON.
+It is designed to follow an `rg` hit without converting the index through a
+lossy database schema.
+
 The experimental [SCIP-to-Graphify consumer](tools/scip-graphify/README.md) is
 an independent Cargo package under `tools/`. It reads standard SCIP and does
 not depend on ty or Ruff. It is not included in the `ty-scip` Python wheel.

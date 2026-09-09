@@ -1,0 +1,16 @@
+[package]
+name = "scip-query"
+version = "0.1.0"
+description = "Lossless, agent-oriented queries over SCIP indexes"
+authors = ["Brendan Murphy"]
+license = "MIT"
+repository = "https://github.com/brendan-m-murphy/ty-scip"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+
+[dependencies]
+protobuf = "=3.7.2"
+scip = "=0.10.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
