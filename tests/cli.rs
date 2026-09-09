@@ -23,9 +23,20 @@ fn supports_public_command_line_conventions() {
 
     let help = Command::new(binary).arg("--help").output().expect("help");
     assert!(help.status.success());
-    assert!(String::from_utf8_lossy(&help.stdout).starts_with("Usage: ty-scip"));
-    assert!(String::from_utf8_lossy(&help.stdout).contains("--project-name NAME"));
-    assert!(String::from_utf8_lossy(&help.stdout).contains("--project-version VERSION"));
+    assert_eq!(
+        String::from_utf8_lossy(&help.stdout),
+        concat!(
+            "Usage: ty-scip [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]\n",
+            "\n",
+            "Indexes a Python project into index.scip by default.\n",
+            "\n",
+            "Options:\n",
+            "  --project-name NAME       Override the SCIP package name\n",
+            "  --project-version VERSION Override the SCIP package version\n",
+            "  -h, --help                Print help\n",
+            "  -V, --version             Print version\n",
+        )
+    );
     assert!(help.stderr.is_empty());
 
     let version = Command::new(binary)
@@ -84,6 +95,19 @@ fn supports_public_command_line_conventions() {
     assert_eq!(
         String::from_utf8_lossy(&missing_value.stderr).trim(),
         "ty-scip: --project-name requires a value"
+    );
+
+    let missing_project = caller.join("missing-project");
+    let unresolved = Command::new(binary)
+        .arg(&missing_project)
+        .output()
+        .expect("reject missing project path");
+    assert!(!unresolved.status.success());
+    assert!(
+        String::from_utf8_lossy(&unresolved.stderr).starts_with(&format!(
+            "ty-scip: cannot resolve project path {}:",
+            missing_project.display()
+        ))
     );
 
     let extra = Command::new(binary)

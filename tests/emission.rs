@@ -97,6 +97,14 @@ fn output_is_reproducible_and_atomically_replaced() {
     fs::create_dir(&blocked).expect("create blocking output directory");
     let failed = run(&root, &blocked);
     assert!(!failed.status.success());
+    assert!(
+        String::from_utf8_lossy(&failed.stderr).starts_with(&format!(
+            "ty-scip: cannot write SCIP index {}:",
+            blocked.display()
+        )),
+        "{}",
+        String::from_utf8_lossy(&failed.stderr)
+    );
     assert_no_temporary_files(&root);
 
     fs::remove_dir_all(root).expect("remove project");

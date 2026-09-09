@@ -3,7 +3,7 @@ use std::{env, ffi::OsString, path::PathBuf, process};
 mod scip_emit;
 mod ty_index;
 
-const USAGE: &str = "Usage: ty-scip [OPTIONS] [PROJECT_ROOT] [OUTPUT.scip]\n\nIndexes a Python project into index.scip by default.\n\nOptions:\n  --project-name NAME       Override the SCIP package name\n  --project-version VERSION Override the SCIP package version\n  -h, --help                Print help\n  -V, --version             Print version";
+const USAGE: &str = "Usage: ty-scip [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]\n\nIndexes a Python project into index.scip by default.\n\nOptions:\n  --project-name NAME       Override the SCIP package name\n  --project-version VERSION Override the SCIP package version\n  -h, --help                Print help\n  -V, --version             Print version";
 
 fn main() {
     if let Err(error) = run() {
@@ -76,7 +76,7 @@ fn run() -> Result<(), String> {
         |path| {
             let path = PathBuf::from(path);
             path.canonicalize()
-                .map_err(|error| format!("cannot resolve project root {}: {error}", path.display()))
+                .map_err(|error| format!("cannot resolve project path {}: {error}", path.display()))
         },
     )?;
     let output = positionals
@@ -120,7 +120,8 @@ fn run() -> Result<(), String> {
         .iter()
         .map(|file| file.globals.len() + file.locals.len())
         .sum::<usize>();
-    scip_emit::write_index(&index.root, &output, &index.files, &index.edges)?;
+    scip_emit::write_index(&index.root, &output, &index.files, &index.edges)
+        .map_err(|error| format!("cannot write SCIP index {}: {error}", output.display()))?;
     eprintln!(
         "indexed {} files: {definitions} definitions, {references} references; \
          {} unresolved, {} ambiguous, {} external, {} skipped \
