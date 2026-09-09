@@ -43,7 +43,7 @@ ty-scip [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]
 ```
 
 With no arguments, `ty-scip` indexes the current directory and writes
-`index.scip` there. If only `PROJECT_ROOT` is supplied, the output is still
+`index.scip` there. If only `PROJECT_PATH` is supplied, the output is still
 written as `index.scip` in the caller's current directory.
 
 ```console
@@ -128,7 +128,7 @@ bytes.
 
 On the frozen 281-document OpenGHG checkout, repeated release-mode runs with
 the same project produced byte-identical indexes, including when written to
-different output paths. The latest index converted to 534 chunks and 19,273
+different output paths. The latest index converted to 542 chunks and 20,303
 mentions and passed the isolated `scip-cli` search, code, members, references,
 dependencies, and reverse-dependencies gate. Index replacement uses an
 exclusively created sibling temporary file followed by an atomic rename. Two

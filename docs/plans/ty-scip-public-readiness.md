@@ -113,10 +113,11 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Finish the remaining low-risk symbol metadata improvements, then produce a
-source-release readiness audit and repeat the frozen OpenGHG plus isolated
-`scip-cli` gates. Installed-package ownership and method-override relationships
-stay upstream-API requests unless a scale-safe public path is found. The
+No further local semantic expansion is justified with the pinned public APIs.
+The next release actions require the project license/copyright and repository
+URL choices; after those, add Cargo metadata and the reviewed notice bundle and
+exercise hosted CI. Installed-package ownership, complete project-walk
+diagnostics, and method-override relationships stay upstream API requests. The
 remaining 39 first-party ambiguities stay unresolved until a typed bulk
 occurrence API can remove constructor/`__call__` expansion without a
 first-target heuristic.
@@ -346,3 +347,19 @@ first-target heuristic.
   variable declaration `type: int = 1` now has an explicit negative regression
   proving it remains a SCIP variable while a PEP 695 declaration is a type
   alias. The full test and Clippy gate passes after the correction.
+- **2026-09-09:** Normalized multi-target standard-library overloads by their
+  serialized symbol identity and allocated durable external parameter symbols
+  beneath those callables. `open(...)` and its `encoding=` keyword now link in
+  the focused Python 3.12 fixture; installed-package or mixed external targets
+  remain conservative omissions. This closes the last actionable final-review
+  finding without selecting an arbitrary overload.
+- **2026-09-09:** Repeated the full scale and consumer gates after overload
+  normalization. Frozen OpenGHG now emits 53,261 references and only 186
+  un-emitted external queries, with unchanged definitions, unresolved,
+  ambiguous, and skipped counts. Two 6.8 MB indexes were byte-identical at
+  SHA-256 `248d9a3bc63768a403abc72d02f4d0599e00db2d3325b4ddc12958c7239f626b`;
+  decoded integrity again found zero missing definition metadata, relationship
+  targets, or external symbol information. The focused stdlib overload fixture
+  passes SCIP 0.8 lint. A fresh `scip-cli` 2.7 conversion produced 542 chunks,
+  20,303 mentions, 7,149 definition ranges, and 6,752 global symbols; the
+  OpenGHG search, code, members, references, and dependency queries still pass.

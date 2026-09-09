@@ -32,8 +32,18 @@ fn emits_proven_stdlib_symbols_and_omits_typing_only_targets() {
         .iter()
         .find(|symbol| symbol.display_name == "len")
         .expect("builtins.len external symbol");
+    let open = index
+        .external_symbols
+        .iter()
+        .find(|symbol| symbol.display_name == "open")
+        .expect("builtins.open external symbol");
+    let encoding = index
+        .external_symbols
+        .iter()
+        .find(|symbol| symbol.display_name == "encoding")
+        .expect("builtins.open encoding parameter");
 
-    for symbol in [path, len] {
+    for symbol in [path, len, open, encoding] {
         let parsed = parse_symbol(&symbol.symbol).expect("parse stdlib symbol");
         let package = parsed.package.as_ref().expect("stdlib package");
         assert_eq!(package.manager, "python");
@@ -48,6 +58,14 @@ fn emits_proven_stdlib_symbols_and_omits_typing_only_targets() {
         support::occurrence(document, &[4, 7, 10]).symbol,
         len.symbol
     );
+    assert_eq!(
+        support::occurrence(document, &[5, 9, 13]).symbol,
+        open.symbol
+    );
+    assert_eq!(
+        support::occurrence(document, &[5, 29, 37]).symbol,
+        encoding.symbol
+    );
     assert!(
         index
             .external_symbols
@@ -56,7 +74,7 @@ fn emits_proven_stdlib_symbols_and_omits_typing_only_targets() {
     );
     assert!(
         String::from_utf8_lossy(&result.stderr)
-            .contains("7 references; 0 unresolved, 0 ambiguous, 3 external")
+            .contains("9 references; 0 unresolved, 0 ambiguous, 3 external")
     );
 
     let first = fs::read(&output).expect("read first SCIP index");

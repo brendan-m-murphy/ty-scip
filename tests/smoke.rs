@@ -21,8 +21,8 @@ fn resolves_the_four_spike_cases() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stderr).trim(),
-        "indexed 3 files: 16 definitions, 17 references; 0 unresolved, 0 ambiguous, \
-         1 external, 0 skipped (0 cross-file local, 0 missing symbol)"
+        "indexed 3 files: 16 definitions, 18 references; 0 unresolved, 0 ambiguous, \
+         0 external, 0 skipped (0 cross-file local, 0 missing symbol)"
     );
     assert!(output.stdout.is_empty());
 

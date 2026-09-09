@@ -41,7 +41,7 @@ plan.
 | Instance attributes | Promoted when ty proves a receiver attribute in a direct method with normal inferred receiver semantics, including identity-preserving decorators; inherited reads resolve | Broader handling through Pyright's class/member model |
 | Imports and aliases | Relative, aliased, dotted, submodule, and `__init__.py` re-export targets when unambiguous; dynamic/wildcard edge cases are not claimed | More mature import, alias, and re-export handling |
 | Package identity | One first-party PEP 621 or explicit name/version for the whole index, plus configured-version `python-stdlib` identities | First-party, standard-library, and installed-distribution identities |
-| External links | Proven runtime standard-library symbols are emitted; typing-only and installed third-party targets are counted and omitted | Standard-library and third-party symbols can be emitted |
+| External links | Proven runtime standard-library symbols, overloads, and callable parameters are emitted; typing-only and installed third-party targets are counted and omitted | Standard-library and third-party symbols can be emitted |
 | Occurrence roles | Definition, import, read, write, and augmented read/write | Definition and read |
 | Symbol information | Kind including semantically verified properties and modern type aliases, display name, raw ty docstrings, source-faithful callable/class/annotated-assignment/type-alias signatures, and enclosing ranges | Emits rendered documentation and signatures through Pyright internals |
 | Inheritance and overrides | Direct first-party class bases are emitted as implementation relationships; inherited reads resolve | Emits class/implementation relationships, including richer internal cases |
@@ -88,7 +88,8 @@ Resolution outcomes mean:
 - **unresolved**: ty returned no declaration target for the queried syntax;
 - **ambiguous**: distinct first-party or mixed targets remained after safe
   binding and overload normalization;
-- **external**: every target was outside the indexed first-party file set; and
+- **external**: every target was outside the indexed first-party file set and
+  could not be emitted as one proven runtime-standard-library symbol; and
 - **skipped**: a target existed but could not be serialized safely, such as a
   document-local symbol referenced from another file.
 

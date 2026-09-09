@@ -516,6 +516,21 @@ pub(crate) fn index(
                     .iter()
                     .all(|(file, _)| !file_indices.contains_key(file))
                 {
+                    let symbols = targets
+                        .iter()
+                        .map(|(file, range)| {
+                            stdlib_symbol(&db, *file, *range, &mut external_symbols)
+                        })
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(symbols) = symbols
+                        && let Some(first) = symbols.first()
+                        && symbols
+                            .iter()
+                            .all(|candidate| candidate.symbol == first.symbol)
+                    {
+                        external_references[source_index].push((range, first.clone()));
+                        continue;
+                    }
                     external += 1;
                     continue;
                 }
@@ -674,6 +689,12 @@ fn stdlib_symbol(
                 &mut symbols,
             );
         }
+        let parsed = parsed_module(db, program_file.python_file(db)).load(db);
+        ParameterSymbols {
+            callables: Vec::new(),
+            globals: &mut symbols,
+        }
+        .visit_body(parsed.suite());
         entry.insert(symbols);
     }
     cache.get(&target_file)?.get(&target_range).cloned()
