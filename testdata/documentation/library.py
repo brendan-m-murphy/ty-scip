@@ -5,6 +5,8 @@ from typing import overload
 SETTING: int = 1
 """Attribute documentation."""
 
+type: int = 1
+
 type Result[T] = list[T]
 
 

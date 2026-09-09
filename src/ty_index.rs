@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, hash_map::Entry},
+    collections::{HashMap, HashSet, hash_map::Entry},
     fs,
     path::PathBuf,
 };
@@ -791,6 +791,7 @@ fn allocate_semantic_symbols<'db>(
     };
     attribute_candidates.visit_body(module.suite());
     let mut definitions = Vec::new();
+    let mut type_alias_ranges = HashSet::new();
     let mut instance_symbols = HashMap::new();
     let mut canonical_definition_ranges = HashMap::new();
     let mut definition_full_ranges = HashMap::new();
@@ -827,6 +828,9 @@ fn allocate_semantic_symbols<'db>(
                         candidate.attribute_range
                     });
                 let kind = definition.kind(db);
+                if matches!(kind, TyDefinitionKind::TypeAlias(_)) {
+                    type_alias_ranges.insert(range);
+                }
                 let property_role = match kind {
                     TyDefinitionKind::Function(function) => function
                         .node(&module)
@@ -929,16 +933,13 @@ fn allocate_semantic_symbols<'db>(
                 signature.clone_from(preferred_signature);
             }
             let full_range = definition_full_ranges.get(&range).copied().unwrap_or(range);
-            let is_type_alias = signature
-                .as_deref()
-                .is_some_and(|signature| signature.starts_with("type "));
             let mut symbol = SymbolData {
                 full_range,
                 documentation,
                 signature,
                 ..symbol.clone()
             };
-            if is_type_alias {
+            if type_alias_ranges.contains(&range) {
                 symbol.kind = DefinitionKind::TypeAlias;
             } else if property_metadata.is_some() {
                 symbol.kind = DefinitionKind::Property;

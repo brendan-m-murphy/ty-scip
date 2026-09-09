@@ -341,3 +341,8 @@ first-target heuristic.
   completed `cargo +1.96.0 check --locked --all-targets` successfully. The
   source release is therefore verified on both its declared minimum and the
   pinned 1.98.1 development toolchain; CI carries the same MSRV check.
+- **2026-09-09:** Final review replaced a textual `type ` signature check with
+  ty's semantic `DefinitionKind::TypeAlias` evidence. The valid soft-keyword
+  variable declaration `type: int = 1` now has an explicit negative regression
+  proving it remains a SCIP variable while a PEP 695 declaration is a type
+  alias. The full test and Clippy gate passes after the correction.
