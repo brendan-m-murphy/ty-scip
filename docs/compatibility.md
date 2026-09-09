@@ -149,7 +149,8 @@ concrete remaining seams and conservative interim decisions are listed in
 
 ## Platform and release limits
 
-The current source build is the distribution mechanism. Index files are
+The GitHub source checkout is the distribution mechanism. A normal crates.io
+package cannot represent the pinned unpublished ty/Ruff Git crates. Index files are
 written through an exclusively created sibling temporary file, flushed, and
 atomically renamed over the destination; failed writes remove their temporary
 file. Project roots use standards-based percent-encoded file URIs. An
@@ -157,13 +158,12 @@ unreadable or undecodable selected source file is an actionable indexing error,
 and the output path is neither created nor replaced; parser errors in readable
 files instead use Ruff's recovered tree and are reported in the summary.
 
-The Cargo package is
-marked `publish = false`, the ty/Ruff dependencies are pinned Git crates, and
-there are no release binaries. macOS is exercised locally; Windows behavior
-is not claimed until file-URI and replacement-rename behavior are tested in
-CI. A project license, locked transitive third-party notice inventory, and an
-automated SCIP consumer gate are required before calling the repository
-release-ready.
+The MIT-licensed Cargo package is therefore marked `publish = false`, the
+ty/Ruff dependencies are pinned Git crates, and there are no release binaries. macOS
+is exercised locally; Windows behavior is not claimed until file-URI and
+replacement-rename behavior are tested in CI. A locked transitive third-party
+notice inventory for binary artifacts and an automated SCIP consumer gate are
+required before calling binary distribution release-ready.
 
 The pinned crates have no external API-stability guarantee. Pin updates are
 deliberate compatibility work, not routine dependency bumps.

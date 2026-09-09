@@ -16,9 +16,9 @@ but it is not yet a drop-in replacement for `scip-python`. The pinned ty/Ruff
 crates are unpublished internal crates without an API-stability promise, and
 the `ty-scip` symbol scheme may still change.
 
-There is no project license or supported binary distribution yet. Build the
-current checkout to evaluate it; do not assume public redistribution terms
-until a license is added.
+The project is MIT licensed. There is no supported binary or crates.io
+distribution yet; the pinned ty/Ruff crates are unpublished, so build the
+current GitHub checkout to evaluate it.
 
 ## Build
 
@@ -154,3 +154,7 @@ link and the relevant false-link case. Before changing the Ruff pin, follow
 the update checklist in [compatibility and limitations](docs/compatibility.md).
 The remaining analyzer seams are recorded as narrow
 [candidate upstream ty APIs](docs/upstream-ty-api-requests.md).
+
+## License
+
+Copyright 2026 Brendan Murphy. Released under the [MIT License](LICENSE).

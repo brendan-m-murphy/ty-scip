@@ -1,6 +1,6 @@
 # ty-scip public-readiness plan
 
-Status: **in progress**
+Status: **GitHub-source ready; awaiting remote and hosted CI**
 Started: 2026-09-08
 
 ## Goal
@@ -39,8 +39,9 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
   and missing environments.
 - CLI errors are actionable; partial project failures do not silently produce a
   misleading successful index.
-- Release artifacts have a README, license/notice, reproducible dependency pin,
-  CI, and a documented update procedure for the Ruff revision.
+- Release artifacts have a README, license and binary-notice policy,
+  reproducible dependency pin, CI, and a documented update procedure for the
+  Ruff revision.
 - Golden SCIP-level tests and a repeatable differential evaluation against
   `scip-python` cover representative static Python constructs.
 - Repeated indexing of the same checkout with the same arguments is
@@ -93,7 +94,7 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 1. Replace the positional spike interface with a small documented CLI only
    where real options require it; preserve the simple default command.
-2. Add README, license/third-party notice, contribution/update notes, and
+2. Add README, license/binary-notice policy, contribution/update notes, and
    supported/unsupported feature documentation.
 3. Add CI for formatting, Clippy, tests, release build, and SCIP lint on the
    minimum practical platform matrix.
@@ -114,13 +115,13 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 ## Current next step
 
 No further local semantic expansion is justified with the pinned public APIs.
-The next release actions require the project license/copyright and repository
-URL choices; after those, add Cargo metadata and the reviewed notice bundle and
-exercise hosted CI. Installed-package ownership, complete project-walk
-diagnostics, and method-override relationships stay upstream API requests. The
-remaining 39 first-party ambiguities stay unresolved until a typed bulk
-occurrence API can remove constructor/`__call__` expansion without a
-first-target heuristic.
+Create the intended GitHub repository and exercise hosted CI before calling a
+tagged source release. A binary release additionally needs a generated and
+reviewed locked transitive notice bundle. Installed-package ownership,
+complete project-walk diagnostics, and method-override relationships stay
+upstream API requests. The remaining 39 first-party ambiguities stay
+unresolved until a typed bulk occurrence API can remove constructor/`__call__`
+expansion without a first-target heuristic.
 
 ## Progress log
 
@@ -336,8 +337,9 @@ first-target heuristic.
   future notice bundle, not the bundle itself. Public redistribution remains
   blocked on the project's license/copyright choice; binary distribution also
   needs the locked transitive license texts and notices assembled and checked.
-  `cargo package --list` succeeds but correctly warns that project license and
-  repository metadata are absent.
+  `cargo package --list` identified the prospective source contents and, at
+  that point, correctly warned that project license and repository metadata
+  were absent.
 - **2026-09-09:** Installed the declared minimum Rust 1.96.0 toolchain and
   completed `cargo +1.96.0 check --locked --all-targets` successfully. The
   source release is therefore verified on both its declared minimum and the
@@ -363,3 +365,21 @@ first-target heuristic.
   passes SCIP 0.8 lint. A fresh `scip-cli` 2.7 conversion produced 542 chunks,
   20,303 mentions, 7,149 definition ranges, and 6,752 global symbols; the
   OpenGHG search, code, members, references, and dependency queries still pass.
+- **2026-09-09:** Brendan Murphy selected the MIT license for the project with
+  a 2026 copyright and the intended repository URL
+  `https://github.com/brendan-m-murphy/ty-scip`. Added the standard license,
+  Cargo `license` and `repository` metadata, and public README notice. The
+  crate remains `publish = false` and source-only until the remote exists and
+  hosted CI passes; binary artifacts remain a separate notice-review decision.
+- **2026-09-09:** Confirmed the source package vendors no third-party code:
+  Ruff/ty and their embedded typeshed data are fetched as dependencies rather
+  than included in `cargo package`. A speculative source NOTICE file would be
+  misleading and was not added. Any later binary bundle must include the
+  locked dependency licenses, Ruff derived-code attributions, and typeshed's
+  Apache-2.0 terms.
+- **2026-09-09:** Verified the intended distribution boundary: Cargo includes
+  `LICENSE` in its prospective file list, but normal `cargo package` cannot
+  represent this project because it removes Git locations and requires
+  versioned crates.io dependencies, while the pinned ty crates are unpublished.
+  Retained `publish = false` and the GitHub-checkout installation path instead
+  of adding unusable placeholder versions or publishing a broken `.crate`.
