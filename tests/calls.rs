@@ -82,5 +82,23 @@ fn emits_ty_ide_navigation_results() {
         .expect("method call");
     assert_eq!(run["from_ranges"], serde_json::json!([[9, 11, 14]]));
 
+    let first_sidecar = fs::read(&facts).expect("read first ty facts");
+    let repeat = Command::new(env!("CARGO_BIN_EXE_ty-scip"))
+        .arg(&root)
+        .arg(&index)
+        .args(["--facts", facts.to_str().expect("UTF-8 test path")])
+        .output()
+        .expect("run ty-scip again");
+    assert!(
+        repeat.status.success(),
+        "{}",
+        String::from_utf8_lossy(&repeat.stderr)
+    );
+    assert_eq!(
+        fs::read(&facts).expect("read repeated ty facts"),
+        first_sidecar,
+        "static IDE results should be reproducible"
+    );
+
     fs::remove_dir_all(root).expect("remove project");
 }

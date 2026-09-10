@@ -13,7 +13,7 @@ test ranking, transitive impact analysis, a SQLite cache, or an MCP server.
 cargo install --locked --path tools/scip-query
 ```
 
-Create a ty index and its optional call-position facts:
+Create a ty index and its optional static IDE results:
 
 ```console
 ty-scip index . --output index.scip --facts index.tyfacts
@@ -21,8 +21,11 @@ ty-scip index . --output index.scip --facts index.tyfacts
 
 The sidecar is loaded automatically when it is named beside the index as
 `index.tyfacts`; `--facts PATH` selects another path. A fingerprint mismatch is
-an error. Indexes from other SCIP producers remain usable for every command
-except `callers` and `callees`.
+an error. With the sidecar, definitions, hover, references, call hierarchy, and
+type hierarchy are the results returned by ty's own `ty_ide` functions during
+indexing. Without it, standard SCIP provides portable fallbacks for every
+command except `callers` and `callees`. Version 1 sidecars from earlier builds
+are intentionally rejected; regenerate them with the matching `ty-scip`.
 
 ## Commands
 
@@ -45,9 +48,9 @@ or `path.py:Qualified.name`. Ambiguity is returned as structured JSON rather
 than resolved arbitrarily. Workspace discovery and bare-name selection ignore
 import-local bindings and return their canonical targets. `references` omits
 imports, matching editor reference navigation. `callers` and `callees` group
-call sites by symbol and report only references that ty resolved and Ruff
-placed in a call's callee position. Output is compact, one-line JSON; pipe it
-through `jq` when inspecting it manually.
+the exact call-hierarchy items and call-site ranges returned by ty. Hover text
+is rendered by ty rather than reconstructed from SCIP documentation. Output is
+compact, one-line JSON; pipe it through `jq` when inspecting it manually.
 
 The intended agent loop is deliberately simple:
 

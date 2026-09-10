@@ -106,13 +106,14 @@ Known conservative omissions include:
 - receiver attributes in class/static/property methods or decorators that
   replace the function, where a `self`/`cls` assumption would be false;
 - genuinely dynamic attributes and imports;
-- string references that are not annotations, such as pytest fixture names and
-  `__slots__` entries;
+- string references that are not annotations in standard SCIP; the optional
+  ty-facts sidecar preserves special references returned by ty's IDE layer;
 - method-override, type-definition, external-base, and dynamic-base
   relationships;
 - rendered/normalized docs, inferred and property-specific signatures,
-  parameter docs, stub-to-source doc fallback, and diagnostics. Call hierarchy
-  requires the optional synchronized ty-facts sidecar;
+  parameter docs, stub-to-source doc fallback, and diagnostics in standard
+  SCIP. The optional synchronized ty-facts sidecar preserves ty's rendered
+  hover and navigation results; call hierarchy requires it;
   and
 - exact `scip-python` symbol compatibility.
 

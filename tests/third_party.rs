@@ -5,7 +5,7 @@ use scip::symbol::parse_symbol;
 mod support;
 
 #[test]
-fn emits_resolved_third_party_symbols_and_call_facts() {
+fn emits_resolved_third_party_symbols_and_ide_results() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/third_party");
     let output =
         std::env::temp_dir().join(format!("ty-scip-third-party-{}.scip", std::process::id()));

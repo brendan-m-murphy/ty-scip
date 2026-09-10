@@ -65,13 +65,12 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 5. Explore public ty APIs for inherited members, implementations, type
    definitions, docstrings, signatures, and diagnostics. Record any missing
    stable API as a narrow Astral request.
-6. Keep all ty/Ruff extraction here: bulk resolved occurrences, project-walk
-   diagnostics, installed-distribution ownership, upward method overrides, and
-   Ruff-proven callee positions. `ty-scip --facts PATH` now emits the first
-   optional sidecar fact: a resolved target at the callable token of a Python
-   call, its source range, and its enclosing symbol. The sidecar is SHA-256
-   matched to the exact SCIP bytes. Keep future facts equally narrow and use
-   standard SCIP fields whenever their semantics match exactly.
+6. Keep all ty/Ruff extraction here. `ty-scip --facts PATH` now serializes the
+   definition, hover, reference, call-hierarchy, and type-hierarchy results from
+   the same public `ty_ide` entry points used by `ty_server`. The versioned
+   sidecar is SHA-256 matched to the exact SCIP bytes. Standard SCIP remains the
+   portable representation; the sidecar carries position-sensitive IDE results
+   that SCIP cannot express without losing their semantics.
 7. For architecture consumers, preserve enough producer evidence to distinguish
    imports, ordinary reads, callable references, proven callee positions,
    ownership, inheritance, and re-exports. Do not emit downstream labels such
@@ -310,9 +309,15 @@ remove constructor/`__call__` expansion without a first-target heuristic.
 - **2026-09-10:** Extended external symbol emission to runtime modules resolved
   through site-packages and editable search paths. These use the stable
   top-level import name and an empty version rather than guessing a Python
-  distribution. Their occurrences now participate in the synchronized
-  callee-position sidecar, allowing offline call hierarchy to retain calls such
-  as `fsspec.open_files`; a synthetic environment fixture covers the boundary.
+  distribution. Their occurrences and definitions participate in synchronized
+  ty IDE results, allowing offline navigation to retain calls such as
+  `fsspec.open_files`; a synthetic environment fixture covers the boundary.
+- **2026-09-10:** Replaced the syntax-derived callee sidecar with version 2
+  static IDE results produced by `ty_ide::goto_definition`, `hover`,
+  `find_references`, incoming/outgoing call hierarchy, and type hierarchy. On
+  the 103-document Intake fixture this produced a 6.9 MB sidecar in 33.6 s;
+  a fresh exact call-hierarchy query took 0.20 s. The corresponding SCIP file
+  remained 2.8 MB and independently usable.
 - **2026-09-09:** Made selected-source read failures fatal before SCIP emission.
   Invalid UTF-8 and other `SourceText` read errors now name the affected file,
   exit unsuccessfully, and neither create nor replace the output path; a

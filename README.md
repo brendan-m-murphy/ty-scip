@@ -53,9 +53,11 @@ written as `index.scip` in the caller's current directory.
 
 Pass `--facts index.tyfacts` to also write ty-specific semantic observations
 that standard SCIP cannot represent. The optional JSON sidecar contains the
-SHA-256 fingerprint of the exact SCIP index it accompanies. Its initial fact
-kind is `callee_position`: a resolved reference that Ruff's syntax tree places
-in the callee of a Python call, together with its enclosing symbol.
+SHA-256 fingerprint of the exact SCIP index it accompanies. It stores the
+definition, hover, reference, call-hierarchy, and type-hierarchy results from
+the same `ty_ide` functions used by ty's language server. Generating it is more
+expensive than generating SCIP alone because project-wide IDE queries are
+precomputed rather than answered interactively.
 
 ```console
 # Current project -> ./index.scip
@@ -64,7 +66,7 @@ ty-scip
 # scip-python-style command -> ./index.scip
 ty-scip index . --output index.scip
 
-# Add synchronized resolved-callee observations
+# Add synchronized offline ty IDE results
 ty-scip index . --output index.scip --facts index.tyfacts
 
 # Another project discovery path -> explicit output

@@ -74,9 +74,10 @@ All ty/Ruff extraction belongs in `ty-scip`. Facts with an exact standard SCIP
 representation—including diagnostics, documentation and signatures,
 distribution identity, and implementation relationships—belong in `.scip`.
 The downstream tool owns only SCIP-to-graph mapping, serialization, caching,
-and traversal. An optional synchronized producer sidecar is reserved for a
-demonstrated useful observation SCIP cannot express. The first candidate is
-syntactic `CALLEE_POSITION`, not graph policy or a claimed runtime call.
+and traversal. An optional synchronized producer sidecar is reserved for IDE
+results SCIP cannot express without changing their semantics. It now stores
+exact outputs from ty's public IDE entry points, not graph policy or secondary
+syntax-derived claims.
 
 ## Product directions after the query benchmark
 
@@ -129,8 +130,8 @@ The next downstream experiments, in order, are:
    agents use fewer broad reads while retaining accuracy;
 3. add lossless module-level aggregates and an evidence-returning `explain`
    query for public-surface and wrapper/worker hypotheses;
-4. join synchronized ty callee-position facts when available, and compare the
-   resulting paths with conservative callable-reference traversal; and
+4. join synchronized ty IDE results when available, and compare the resulting
+   paths with conservative callable-reference traversal; and
 5. evaluate architectural summaries against hand-mapped Python subsystems,
    including false-positive and dynamic-edge audits.
 
@@ -175,7 +176,7 @@ fixtures, and then remove `tools/scip-graphify`.
 
 The consumer should ultimately be released outside the `ty-scip` producer.
 It consumes standard SCIP, must remain usable with indexes from `scip-python`,
-and must not import ty/Ruff internals. `ty-scip` should emit standard SCIP plus
-an optional synchronized facts sidecar only for evidence standard SCIP cannot
-represent, such as resolved callee-position facts. The downstream query/skill
-project may join that sidecar without making it mandatory.
+and must not import ty/Ruff internals. `ty-scip` emits standard SCIP plus an
+optional synchronized sidecar for exact ty IDE results that SCIP cannot
+represent. The downstream query/skill project may join that sidecar without
+making it mandatory.
