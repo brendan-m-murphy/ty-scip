@@ -92,6 +92,11 @@ SCIP authority. They should not be collapsed into one large default response.
    this symbol?” benefit from bounded transitive traversal, but results should
    be grouped by file and ranked by shortest evidence path. Keep direct-only
    (`--depth 0`) and occurrence-level output available for audit and detail.
+   Grouped rows should identify a representative test function and behavioral
+   snippet, classify the evidence as direct, downstream-contract, or incidental,
+   and expose the terminal symbol plus bounded follow-up selectors. Agents should
+   issue one important selector per command and query each material terminal
+   implementation layer before synthesizing a change surface.
 3. **Architecture orientation.** A derived SQLite graph can answer higher-level
    questions without reducing the underlying protobuf. This is where the useful
    part of Graphify's promise belongs: identify likely public entry points,
@@ -110,7 +115,8 @@ source/`rg` evidence alongside SCIP.
 
 The next downstream experiments, in order, are:
 
-1. benchmark file-grouped test projection against occurrence-level output;
+1. measure whether relevance-labelled grouped output and terminal-layer
+   follow-up recover contract tests that agents previously saw but ignored;
 2. document the interactive query loop in the agent skill and measure whether
    agents use fewer broad reads while retaining accuracy;
 3. add lossless module-level aggregates and an evidence-returning `explain`
@@ -134,3 +140,9 @@ but final quality remained 17/18 because the agent still did not select that
 contract test for inspection. Keep grouping as output hygiene; do not treat it
 as a substitute for following the architectural stages interactively and
 querying their tests directly.
+
+The first audit-driven refinement now makes that interaction explicit. Grouped
+rows prefer test-function evidence over imports, include a behavioral snippet
+when `--root` is supplied, label the relationship, and return both the terminal
+symbol and follow-up selectors. The benchmark prompt must still require agents
+to act on those leads; output structure alone cannot ensure source inspection.

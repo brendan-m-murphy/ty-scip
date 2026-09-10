@@ -40,7 +40,7 @@ scip-query --index INDEX.scip [--root PATH] [--limit N] path SOURCE TARGET [--ma
 scip-query --index INDEX.scip [--root PATH] [--limit N] affected SELECTOR [--max-depth N]
 scip-query --index INDEX.scip build-db DATABASE
 scip-query sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both] [--path PREFIX] [--offset N] [--limit N]
-scip-query sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N] [--group-files] [--offset N] [--limit N]
+scip-query [--root PATH] sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N] [--group-files] [--offset N] [--limit N]
 scip-query sql-stats DATABASE
 ```
 
@@ -92,7 +92,12 @@ selectors include bounded suggestions.
   callable-reference paths rather than claims about runtime calls. Pass
   `--depth 0` for the original direct-only projection. Pass `--group-files` to
   return one ranked summary and evidence path per test file instead of separate
-  occurrence/role rows.
+  occurrence/role rows. With `--root`, grouped summaries prefer a representative
+  test function and behavioral source snippet over an import occurrence. Their
+  relevance is labelled `direct`, `downstream_contract`, or `incidental`; the
+  label is an evidence classification, not a claim that the test is sufficient.
+  `terminal_symbol` names the last implementation layer in the evidence path,
+  and `follow_up_selectors` provides bounded selectors for the next query.
 - `sql-stats` reports cache row counts for parity checks.
 
 SQL queries collapse document-local import bindings onto the global symbol when
@@ -116,13 +121,29 @@ scip-query --index index.scip --root . refs \
   --path tests/ --compact --limit 20
 
 # Summarize direct and downstream test evidence once per file.
-scip-query sql-tests index.sqlite BaseStore.assign_data \
+scip-query --root . sql-tests index.sqlite BaseStore.assign_data \
   --group-files --depth 4 --limit 20
 ```
 
 Prefer the interactive `at`/`context`/`refs` loop for behavioral questions.
 Use grouped `sql-tests` when the desired answer is a bounded change surface;
 use occurrence-level output to audit why a grouped file was selected.
+
+For agent investigations, use one important selector per command so its
+evidence remains attributable. A useful loop is:
+
+1. orient with `rg`, then resolve the relevant public entry point;
+2. query its grouped tests and inspect promising behavioral snippets;
+3. follow the returned evidence path to each terminal implementation layer;
+4. run `sql-tests` for that layer or a returned `follow_up_selector`; and
+5. inspect at least one `direct` or `downstream_contract` test for each material
+   terminal layer before synthesizing the change surface.
+
+For example, a projection from `BaseStore.assign_data` can terminate at
+`AbstractDatasource.add`. Query that selector next, then refine to an exact
+method such as `Datasource.add_data` when source inspection shows that it owns
+the relevant persistence behavior. This interactive refinement is the intended
+LSP-like use; a single transitive result dump is only a set of leads.
 
 ## Semantic limits
 
