@@ -571,7 +571,7 @@ fn sqlite_resolves_import_aliases_and_projects_tests() {
     assert_eq!(ambiguous["status"], "ambiguous");
     assert_eq!(ambiguous["candidates"].as_array().unwrap().len(), 2);
 
-    let tests = fixture.success(&["sql-tests", database_text, "Alpha", "--limit", "10"]);
+    let tests = fixture.success(&["test-candidates", database_text, "Alpha", "--limit", "10"]);
     assert_eq!(tests["resolved"], "pkg.Alpha");
     let items = result_items(&tests);
     assert!(
@@ -580,6 +580,9 @@ fn sqlite_resolves_import_aliases_and_projects_tests() {
             .all(|item| item["document"] == "tests/test_models.py")
     );
     assert!(items.iter().any(|item| item["match_kind"] == "symbol"));
+    assert!(items.iter().any(|item| {
+        item["match_kind"] == "symbol" && item["evidence_kind"] == "direct_reference"
+    }));
     assert!(
         items
             .iter()
@@ -591,8 +594,15 @@ fn sqlite_resolves_import_aliases_and_projects_tests() {
             .any(|item| { item["match_kind"] == "subtype" && item["target"] == "tests.TestAlpha" })
     );
 
-    let method_tests =
-        fixture.success(&["sql-tests", database_text, "pkg.Alpha#run", "--limit", "10"]);
+    let method_tests = fixture.success(&[
+        "test-candidates",
+        database_text,
+        "pkg.Alpha#run",
+        "--depth",
+        "4",
+        "--limit",
+        "10",
+    ]);
     assert!(result_items(&method_tests).iter().any(|item| {
         item["match_kind"] == "owner"
             && item["target"] == "pkg.Alpha"
@@ -609,7 +619,7 @@ fn sqlite_resolves_import_aliases_and_projects_tests() {
     );
 
     let shallow = fixture.success(&[
-        "sql-tests",
+        "test-candidates",
         database_text,
         "pkg.Alpha#run",
         "--depth",
@@ -624,10 +634,12 @@ fn sqlite_resolves_import_aliases_and_projects_tests() {
     );
 
     let grouped = fixture.success(&[
-        "sql-tests",
+        "test-candidates",
         database_text,
         "pkg.Alpha#run",
         "--group-files",
+        "--depth",
+        "4",
         "--limit",
         "10",
     ]);
@@ -638,7 +650,14 @@ fn sqlite_resolves_import_aliases_and_projects_tests() {
         .find(|item| item["document"] == "tests/test_leaf.py")
         .unwrap();
     assert_eq!(leaf["depth"], 2);
-    assert_eq!(leaf["relevance"], "downstream_contract");
+    assert_eq!(
+        leaf["representative_evidence_kind"],
+        "transitive_callable_reference"
+    );
+    assert_eq!(
+        leaf["evidence_kinds"],
+        serde_json::json!(["transitive_callable_reference"])
+    );
     assert_eq!(leaf["test_symbol"], "tests.test_leaf");
     assert_eq!(leaf["snippet"], "assert leaf() == 1");
     assert_eq!(leaf["terminal_symbol"], "pkg.leaf");

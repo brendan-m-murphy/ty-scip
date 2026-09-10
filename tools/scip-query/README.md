@@ -40,7 +40,7 @@ scip-query --index INDEX.scip [--root PATH] [--limit N] path SOURCE TARGET [--ma
 scip-query --index INDEX.scip [--root PATH] [--limit N] affected SELECTOR [--max-depth N]
 scip-query --index INDEX.scip build-db DATABASE
 scip-query sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both] [--path PREFIX] [--offset N] [--limit N]
-scip-query [--root PATH] sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N] [--group-files] [--offset N] [--limit N]
+scip-query [--root PATH] test-candidates DATABASE SELECTOR [--path PREFIX] [--depth N] [--group-files] [--offset N] [--limit N]
 scip-query sql-stats DATABASE
 ```
 
@@ -83,19 +83,21 @@ selectors include bounded suggestions.
   index. It groups repeated occurrences with the same source, target, document,
   roles, and provenance, reporting their count and first location. The direct
   commands remain available for unmerged records and richer context.
-- `sql-tests` returns bounded test references to a symbol and follows internal
-  callable references up to `--depth` (default 4). Each result includes its
-  depth and evidence path. Class projections include directly owned members and
-  SCIP implementation/type-definition subtypes; method projections include the
-  owning class. Its default path is `tests/`; use `--path` for another test tree.
-  Until a synchronized ty callee-position sidecar exists, downstream paths are
-  callable-reference paths rather than claims about runtime calls. Pass
-  `--depth 0` for the original direct-only projection. Pass `--group-files` to
-  return one ranked summary and evidence path per test file instead of separate
+- `test-candidates` returns bounded test-tree references related to a symbol.
+  The default `--depth 0` does not traverse references. Class projection still
+  includes owned members and SCIP implementation/type-definition subtypes;
+  method projection includes its owning class. These expansions are explicitly
+  labelled and are candidates, not proof that a test exercises the selector.
+  A positive `--depth` additionally follows internal callable-shaped read
+  references. Without synchronized ty callee-position facts, those paths do not
+  establish runtime calls. Occurrence rows report `evidence_kind`; grouped rows
+  report `representative_evidence_kind` and all `evidence_kinds` as
+  `direct_reference`, `owner_expansion`, `owned_member_expansion`,
+  `subtype_expansion`, or `transitive_callable_reference`. The default path is
+  `tests/`; use `--path` for another test tree. Pass `--group-files` to return
+  one ranked candidate and evidence path per test file instead of separate
   occurrence/role rows. With `--root`, grouped summaries prefer a representative
-  test function and behavioral source snippet over an import occurrence. Their
-  relevance is labelled `direct`, `downstream_contract`, or `incidental`; the
-  label is an evidence classification, not a claim that the test is sufficient.
+  test function and behavioral source snippet over an import occurrence.
   `terminal_symbol` names the last implementation layer in the evidence path,
   and `follow_up_selectors` provides bounded selectors for the next query.
 - `sql-stats` reports cache row counts for parity checks.
@@ -121,12 +123,12 @@ scip-query --index index.scip --root . refs \
   --path tests/ --compact --limit 20
 
 # Summarize direct and downstream test evidence once per file.
-scip-query --root . sql-tests index.sqlite BaseStore.assign_data \
+scip-query --root . test-candidates index.sqlite BaseStore.assign_data \
   --group-files --depth 4 --limit 20
 ```
 
 Prefer the interactive `at`/`context`/`refs` loop for behavioral questions.
-Use grouped `sql-tests` when the desired answer is a bounded change surface;
+Use grouped `test-candidates` when exploring a possible change surface;
 use occurrence-level output to audit why a grouped file was selected.
 
 For agent investigations, use one important selector per command so its
@@ -135,9 +137,8 @@ evidence remains attributable. A useful loop is:
 1. orient with `rg`, then resolve the relevant public entry point;
 2. query its grouped tests and inspect promising behavioral snippets;
 3. follow the returned evidence path to each terminal implementation layer;
-4. run `sql-tests` for that layer or a returned `follow_up_selector`; and
-5. inspect at least one `direct` or `downstream_contract` test for each material
-   terminal layer before synthesizing the change surface.
+4. run `test-candidates` for that layer or a returned `follow_up_selector`; and
+5. inspect candidate source before claiming that it guards the change.
 
 For example, a projection from `BaseStore.assign_data` can terminate at
 `AbstractDatasource.add`. Query that selector next, then refine to an exact

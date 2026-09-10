@@ -93,10 +93,10 @@ SCIP authority. They should not be collapsed into one large default response.
    be grouped by file and ranked by shortest evidence path. Keep direct-only
    (`--depth 0`) and occurrence-level output available for audit and detail.
    Grouped rows should identify a representative test function and behavioral
-   snippet, classify the evidence as direct, downstream-contract, or incidental,
-   and expose the terminal symbol plus bounded follow-up selectors. Agents should
-   issue one important selector per command and query each material terminal
-   implementation layer before synthesizing a change surface.
+   snippet, distinguish direct references from owner, member, subtype, and
+   transitive callable-reference expansions, and expose the terminal symbol
+   plus bounded follow-up selectors. These are candidates for inspection, not
+   evidence that a test exercises the original selector.
 3. **Architecture orientation.** A derived SQLite graph can answer higher-level
    questions without reducing the underlying protobuf. This is where the useful
    part of Graphify's promise belongs: identify likely public entry points,
@@ -115,8 +115,9 @@ source/`rg` evidence alongside SCIP.
 
 The next downstream experiments, in order, are:
 
-1. measure whether relevance-labelled grouped output and terminal-layer
-   follow-up recover contract tests that agents previously saw but ignored;
+1. freeze the OpenGHG development trace and validate the stable query/cache
+   surface on unseen tasks with retrieval precision scored separately from
+   answer synthesis;
 2. document the interactive query loop in the agent skill and measure whether
    agents use fewer broad reads while retaining accuracy;
 3. add lossless module-level aggregates and an evidence-returning `explain`
@@ -141,8 +142,17 @@ contract test for inspection. Keep grouping as output hygiene; do not treat it
 as a substitute for following the architectural stages interactively and
 querying their tests directly.
 
-The first audit-driven refinement now makes that interaction explicit. Grouped
-rows prefer test-function evidence over imports, include a behavioral snippet
-when `--root` is supplied, label the relationship, and return both the terminal
-symbol and follow-up selectors. The benchmark prompt must still require agents
-to act on those leads; output structure alone cannot ensure source inspection.
+The audit-driven refinement makes that interaction explicit. Grouped rows
+prefer test-function evidence over imports, include a behavioral snippet when
+`--root` is supplied, label their derivation, and return both the terminal
+symbol and follow-up selectors. The command is named `test-candidates` because
+SCIP references—especially owner/subtype projection and transitive
+callable-shaped reads—cannot establish that a test exercises a method.
+
+Stop using the OpenGHG semantic task to tune this projection. Its repeated
+17/18 results, one 18/18 outlier, and a pathname-only recall scorer make the
+existing table a development journal rather than a controlled comparison. The
+next evaluation should freeze the tool first, use unseen tasks (preferably in
+another repository), interleave at least three replicates with plain `rg`, and
+score retrieval precision separately from which retrieved facts the agent
+chooses to mention.

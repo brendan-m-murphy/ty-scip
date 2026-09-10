@@ -186,12 +186,13 @@ impl fmt::Display for SqlSelectionError {
 impl Error for SqlSelectionError {}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct SqlTestSummary {
+pub struct TestCandidateSummary {
     pub document: String,
     pub line: Option<i64>,
     pub column: Option<i64>,
     pub target: String,
     pub match_kind: String,
+    pub evidence_kind: String,
     pub roles: Vec<String>,
     pub occurrences: usize,
     pub depth: usize,
@@ -203,17 +204,17 @@ pub struct SqlTestSummary {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct SqlTestPage {
+pub struct TestCandidatePage {
     pub total: usize,
     pub offset: usize,
     pub returned: usize,
     pub truncated: bool,
     pub next_offset: Option<usize>,
-    pub items: Vec<SqlTestSummary>,
+    pub items: Vec<TestCandidateSummary>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct SqlTestFileSummary {
+pub struct TestCandidateFileSummary {
     pub document: String,
     pub depth: usize,
     pub path: Vec<String>,
@@ -221,7 +222,8 @@ pub struct SqlTestFileSummary {
     pub column: Option<i64>,
     pub representative_target: String,
     pub representative_match_kind: String,
-    pub relevance: String,
+    pub representative_evidence_kind: String,
+    pub evidence_kinds: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_symbol: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -233,13 +235,13 @@ pub struct SqlTestFileSummary {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct SqlTestFilePage {
+pub struct TestCandidateFilePage {
     pub total: usize,
     pub offset: usize,
     pub returned: usize,
     pub truncated: bool,
     pub next_offset: Option<usize>,
-    pub items: Vec<SqlTestFileSummary>,
+    pub items: Vec<TestCandidateFileSummary>,
 }
 
 impl QueryIndex {
@@ -573,14 +575,14 @@ impl SqlDatabase {
         ))
     }
 
-    pub fn tests(
+    pub fn test_candidates(
         &self,
         selector: &str,
         path_prefix: &str,
         max_depth: usize,
         offset: usize,
         limit: usize,
-    ) -> Result<(String, SqlTestPage)> {
+    ) -> Result<(String, TestCandidatePage)> {
         let (symbol_id, resolved) = self.resolve(selector)?;
         let mut targets = BTreeMap::new();
         let mut seen = BTreeSet::from([symbol_id]);
@@ -651,18 +653,22 @@ impl SqlDatabase {
 
         let mut items: Vec<_> = groups
             .into_iter()
-            .map(|(key, group)| SqlTestSummary {
-                document: key.document,
-                line: group.line.map(|value| value + 1),
-                column: group.column.map(|value| value + 1),
-                target: key.target,
-                match_kind: key.match_kind,
-                roles: serde_json::from_str(&key.roles_json).unwrap_or_default(),
-                occurrences: group.count,
-                depth: group.depth,
-                path: group.path,
-                test_symbol: key.test_symbol,
-                snippet: group.snippet,
+            .map(|(key, group)| {
+                let evidence_kind = candidate_evidence_kind(group.depth, &key.match_kind);
+                TestCandidateSummary {
+                    document: key.document,
+                    line: group.line.map(|value| value + 1),
+                    column: group.column.map(|value| value + 1),
+                    target: key.target,
+                    match_kind: key.match_kind,
+                    evidence_kind: evidence_kind.to_owned(),
+                    roles: serde_json::from_str(&key.roles_json).unwrap_or_default(),
+                    occurrences: group.count,
+                    depth: group.depth,
+                    path: group.path,
+                    test_symbol: key.test_symbol,
+                    snippet: group.snippet,
+                }
             })
             .collect();
         items.sort_by(|left, right| {
@@ -679,7 +685,7 @@ impl SqlDatabase {
         let next_offset = (offset + returned < total).then_some(offset + returned);
         Ok((
             resolved,
-            SqlTestPage {
+            TestCandidatePage {
                 total,
                 offset,
                 returned,
@@ -690,16 +696,17 @@ impl SqlDatabase {
         ))
     }
 
-    pub fn test_files(
+    pub fn test_candidate_files(
         &self,
         selector: &str,
         path_prefix: &str,
         max_depth: usize,
         offset: usize,
         limit: usize,
-    ) -> Result<(String, SqlTestFilePage)> {
-        let (resolved, rows) = self.tests(selector, path_prefix, max_depth, 0, usize::MAX)?;
-        let mut groups = BTreeMap::<String, Vec<SqlTestSummary>>::new();
+    ) -> Result<(String, TestCandidateFilePage)> {
+        let (resolved, rows) =
+            self.test_candidates(selector, path_prefix, max_depth, 0, usize::MAX)?;
+        let mut groups = BTreeMap::<String, Vec<TestCandidateSummary>>::new();
         for row in rows.items {
             groups.entry(row.document.clone()).or_default().push(row);
         }
@@ -727,7 +734,13 @@ impl SqlDatabase {
                 .map(|row| row.target.as_str())
                 .collect::<BTreeSet<_>>()
                 .len();
-            items.push(SqlTestFileSummary {
+            let evidence_kinds = rows
+                .iter()
+                .map(|row| row.evidence_kind.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            items.push(TestCandidateFileSummary {
                 document,
                 depth: representative.depth,
                 path: representative.path.clone(),
@@ -735,16 +748,8 @@ impl SqlDatabase {
                 column: representative.column,
                 representative_target: representative.target.clone(),
                 representative_match_kind: representative.match_kind.clone(),
-                relevance: if is_behavioral_test(representative) {
-                    if representative.depth == 0 && representative.match_kind == "symbol" {
-                        "direct"
-                    } else {
-                        "downstream_contract"
-                    }
-                } else {
-                    "incidental"
-                }
-                .to_owned(),
+                representative_evidence_kind: representative.evidence_kind.clone(),
+                evidence_kinds,
                 test_symbol: representative.test_symbol.clone(),
                 snippet: representative.snippet.clone(),
                 terminal_symbol: representative.path.last().cloned().unwrap_or_default(),
@@ -768,7 +773,7 @@ impl SqlDatabase {
         let next_offset = (offset + returned < total).then_some(offset + returned);
         Ok((
             resolved,
-            SqlTestFilePage {
+            TestCandidateFilePage {
                 total,
                 offset,
                 returned,
@@ -1160,7 +1165,7 @@ fn insert_projection(
     }
 }
 
-fn is_behavioral_test(item: &SqlTestSummary) -> bool {
+fn is_behavioral_test(item: &TestCandidateSummary) -> bool {
     item.test_symbol
         .as_deref()
         .and_then(|symbol| symbol.rsplit('.').next())
@@ -1169,6 +1174,20 @@ fn is_behavioral_test(item: &SqlTestSummary) -> bool {
             .roles
             .iter()
             .any(|role| matches!(role.as_str(), "read" | "write" | "definition"))
+}
+
+fn candidate_evidence_kind(depth: usize, match_kind: &str) -> &'static str {
+    if depth > 0 {
+        "transitive_callable_reference"
+    } else {
+        match match_kind {
+            "symbol" => "direct_reference",
+            "owner" => "owner_expansion",
+            "member" => "owned_member_expansion",
+            "subtype" => "subtype_expansion",
+            _ => "derived_candidate",
+        }
+    }
 }
 
 fn match_rank(kind: &str) -> usize {
