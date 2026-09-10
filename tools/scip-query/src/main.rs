@@ -758,7 +758,9 @@ fn compact_reference(index: &QueryIndex, reference: &ReferenceView) -> serde_jso
     json!({
         "evidence": evidence,
         "source": symbol_label(index, &reference.source),
+        "source_selector": reference.source.canonical(),
         "target": symbol_label(index, &reference.target),
+        "target_selector": reference.target.canonical(),
     })
 }
 

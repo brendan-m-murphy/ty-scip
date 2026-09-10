@@ -561,14 +561,15 @@ impl QueryIndex {
         })?;
         let text = match (column, encoding) {
             (None, _) => None,
-            (Some(_), PositionEncoding::UTF8CodeUnitOffsetFromLineStart) => {
-                self.source_text(document).ok()
-            }
+            (
+                Some(_),
+                PositionEncoding::UTF8CodeUnitOffsetFromLineStart
+                | PositionEncoding::UnspecifiedPositionEncoding,
+            ) => self.source_text(document).ok(),
             (
                 Some(_),
                 PositionEncoding::UTF16CodeUnitOffsetFromLineStart
-                | PositionEncoding::UTF32CodeUnitOffsetFromLineStart
-                | PositionEncoding::UnspecifiedPositionEncoding,
+                | PositionEncoding::UTF32CodeUnitOffsetFromLineStart,
             ) => Some(self.source_text(document)?),
         };
         let point = column
@@ -691,6 +692,7 @@ impl QueryIndex {
             items.extend(self.outgoing.get(id).into_iter().flatten().cloned());
         }
         items.sort();
+        items.dedup();
         Page::new(items, limit)
     }
 
@@ -1104,7 +1106,15 @@ impl QueryIndex {
             .or(occurrence.enclosing_range)
             .ok_or_else(|| QueryError::UnknownSymbol("definition has no range".to_owned()))?;
         let lines: Vec<_> = text.lines().collect();
-        let start = (range.start.line.max(0) as usize).saturating_sub(before);
+        let definition_start = usize::try_from(range.start.line)
+            .map_err(|_| QueryError::InvalidPosition { line: 0, column: 0 })?;
+        if definition_start >= lines.len() {
+            return Err(QueryError::InvalidPosition {
+                line: definition_start + 1,
+                column: range.start.character.max(0) as usize + 1,
+            });
+        }
+        let start = definition_start.saturating_sub(before);
         let requested_end =
             ((range.end.line.max(range.start.line) as usize) + after + 1).min(lines.len());
         let total_lines = requested_end.saturating_sub(start);
@@ -1482,5 +1492,57 @@ mod tests {
             query.at("missing.py", 1, Some(1), 1),
             Err(QueryError::Io(_))
         ));
+    }
+
+    #[test]
+    fn unspecified_encoding_uses_utf8_columns_without_source_text() {
+        let index = Index {
+            documents: vec![Document {
+                relative_path: "missing.py".into(),
+                occurrences: vec![Occurrence {
+                    range: vec![0, 0, 1],
+                    symbol: "local 0".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let query = QueryIndex::from_index(index, None).unwrap();
+        assert_eq!(query.at("missing.py", 1, Some(1), 1).unwrap().returned, 1);
+    }
+
+    #[test]
+    fn stale_source_range_becomes_a_snippet_failure() {
+        let symbol = "example package demo 1.0 pkg/value().";
+        let index = Index {
+            documents: vec![Document {
+                relative_path: "short.py".into(),
+                text: "value = 1\n".into(),
+                symbols: vec![SymbolInformation {
+                    symbol: symbol.into(),
+                    display_name: "value".into(),
+                    kind: symbol_information::Kind::Function.into(),
+                    ..Default::default()
+                }],
+                occurrences: vec![Occurrence {
+                    range: vec![5, 0, 5],
+                    symbol: symbol.into(),
+                    symbol_roles: SymbolRole::Definition as i32,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let query = QueryIndex::from_index(index, None).unwrap();
+        let id = SymbolId {
+            document: None,
+            symbol: symbol.into(),
+        };
+        let context = query.context(&id, 2, 2).unwrap();
+        assert_eq!(context.snippets.returned, 0);
+        assert_eq!(context.snippet_failures.returned, 1);
+        assert!(context.snippet_failures.items[0].error.contains("6:1"));
     }
 }

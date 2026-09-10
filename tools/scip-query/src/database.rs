@@ -447,7 +447,13 @@ struct ReferenceKey {
 struct ReferenceGroup {
     line: Option<i64>,
     column: Option<i64>,
-    count: usize,
+    evidence: BTreeSet<ReferenceEvidenceId>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum ReferenceEvidenceId {
+    Occurrence(i64, i64),
+    Relationship(i64),
 }
 
 #[derive(Clone, Debug)]
@@ -545,7 +551,7 @@ impl SqlDatabase {
                 column: group.column.map(|value| value + 1),
                 roles: serde_json::from_str(&key.roles_json).unwrap_or_default(),
                 provenance: key.provenance,
-                occurrences: group.count,
+                occurrences: group.evidence.len(),
                 relationship: key.relationship,
             })
             .collect();
@@ -608,11 +614,11 @@ impl SqlDatabase {
              JOIN documents d ON d.id=o.document_id
              JOIN symbols s ON s.id=o.symbol_id
              LEFT JOIN symbols owner ON owner.id=o.owner_symbol_id
-             WHERE o.symbol_id=? AND d.path LIKE ? || '%'",
+             WHERE o.symbol_id=? AND substr(d.path, 1, length(?)) = ?",
         )?;
         let mut groups = BTreeMap::<TestKey, TestGroup>::new();
         for (target, projection) in targets {
-            let rows = query.query_map(params![target, path_prefix], |row| {
+            let rows = query.query_map(params![target, path_prefix, path_prefix], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, Option<i64>>(1)?,
@@ -1025,7 +1031,7 @@ impl SqlDatabase {
             "o.symbol_id"
         };
         let sql = format!(
-            "SELECT source.qualified_name,target.qualified_name,d.path,o.start_line,o.start_character,o.role_names_json,o.provenance
+            "SELECT source.qualified_name,target.qualified_name,d.path,o.start_line,o.start_character,o.role_names_json,o.provenance,o.document_id,o.occurrence_index
              FROM occurrences o
              JOIN symbols source ON source.id=o.owner_symbol_id
              JOIN symbols target ON target.id=o.symbol_id
@@ -1042,10 +1048,22 @@ impl SqlDatabase {
                 row.get::<_, Option<i64>>(4)?,
                 row.get::<_, String>(5)?,
                 row.get::<_, String>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
             ))
         })?;
         for row in rows {
-            let (source, target, document, line, column, roles_json, provenance) = row?;
+            let (
+                source,
+                target,
+                document,
+                line,
+                column,
+                roles_json,
+                provenance,
+                document_id,
+                occurrence_index,
+            ) = row?;
             if path_prefix.is_some_and(|prefix| !document.starts_with(prefix)) {
                 continue;
             }
@@ -1061,6 +1079,7 @@ impl SqlDatabase {
                 },
                 line,
                 column,
+                ReferenceEvidenceId::Occurrence(document_id, occurrence_index),
             );
         }
         Ok(())
@@ -1079,7 +1098,7 @@ impl SqlDatabase {
             "r.target_symbol_id"
         };
         let sql = format!(
-            "SELECT source.qualified_name,target.qualified_name,r.document,r.is_reference,r.is_implementation,r.is_type_definition,r.is_definition,r.provenance
+            "SELECT source.qualified_name,target.qualified_name,r.document,r.is_reference,r.is_implementation,r.is_type_definition,r.is_definition,r.provenance,r.id
              FROM relationships r
              JOIN symbols source ON source.id=r.source_symbol_id
              JOIN symbols target ON target.id=r.target_symbol_id
@@ -1098,10 +1117,11 @@ impl SqlDatabase {
                     is_definition: row.get(6)?,
                 },
                 row.get::<_, String>(7)?,
+                row.get::<_, i64>(8)?,
             ))
         })?;
         for row in rows {
-            let (source, target, document, relationship, provenance) = row?;
+            let (source, target, document, relationship, provenance, relationship_id) = row?;
             if path_prefix.is_some_and(|prefix| {
                 document
                     .as_deref()
@@ -1121,6 +1141,7 @@ impl SqlDatabase {
                 },
                 None,
                 None,
+                ReferenceEvidenceId::Relationship(relationship_id),
             );
         }
         Ok(())
@@ -1132,15 +1153,34 @@ fn absorb_group(
     key: ReferenceKey,
     line: Option<i64>,
     column: Option<i64>,
+    evidence: ReferenceEvidenceId,
 ) {
     let group = groups.entry(key).or_insert(ReferenceGroup {
         line,
         column,
-        count: 0,
+        evidence: BTreeSet::new(),
     });
-    group.line = group.line.min(line).or(group.line).or(line);
-    group.column = group.column.min(column).or(group.column).or(column);
-    group.count += 1;
+    if !group.evidence.insert(evidence) {
+        return;
+    }
+    if earlier_location((line, column), (group.line, group.column)) {
+        group.line = line;
+        group.column = column;
+    }
+}
+
+fn earlier_location(
+    candidate: (Option<i64>, Option<i64>),
+    current: (Option<i64>, Option<i64>),
+) -> bool {
+    match (candidate.0, current.0) {
+        (Some(_), None) => true,
+        (Some(candidate_line), Some(current_line)) => {
+            (candidate_line, candidate.1.unwrap_or(i64::MAX))
+                < (current_line, current.1.unwrap_or(i64::MAX))
+        }
+        _ => false,
+    }
 }
 
 fn insert_projection(

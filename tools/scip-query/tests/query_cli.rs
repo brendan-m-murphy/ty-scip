@@ -19,6 +19,7 @@ const HELPER: &str = "example package demo 1.0 pkg/helper().";
 const LEAF: &str = "example package demo 1.0 pkg/leaf().";
 const TEST_ALPHA: &str = "example package demo 1.0 tests/TestAlpha#";
 const TEST_LEAF: &str = "example package demo 1.0 tests/test_leaf().";
+const RECURSE: &str = "example package demo 1.0 pkg/recurse().";
 
 static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
 
@@ -267,6 +268,51 @@ fn synthetic_index() -> Index {
     }
 }
 
+fn recursive_index() -> Index {
+    let mut recurse = info(RECURSE, "recurse", symbol_information::Kind::Function);
+    recurse.relationships.push(Relationship {
+        symbol: RECURSE.into(),
+        is_reference: true,
+        ..Default::default()
+    });
+    Index {
+        documents: vec![Document {
+            relative_path: "pkg/recurse.py".into(),
+            symbols: vec![recurse],
+            occurrences: vec![
+                definition(RECURSE, &[0, 4, 11], &[0, 0, 12, 0]),
+                reference(RECURSE, &[1, 20, 27], SymbolRole::ReadAccess as i32),
+                reference(RECURSE, &[9, 1, 8], SymbolRole::ReadAccess as i32),
+                reference(RECURSE, &[1, 5, 12], SymbolRole::ReadAccess as i32),
+            ],
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+fn path_prefix_index() -> Index {
+    let documents = [
+        "tests_/literal.py",
+        "testsa/wildcard.py",
+        "tests%/literal.py",
+        "testsx/wildcard.py",
+        "TESTS_/case.py",
+    ]
+    .into_iter()
+    .map(|path| Document {
+        relative_path: path.into(),
+        occurrences: vec![reference(ALPHA, &[0, 0, 5], SymbolRole::ReadAccess as i32)],
+        ..Default::default()
+    })
+    .collect();
+    Index {
+        documents,
+        external_symbols: vec![info(ALPHA, "Alpha", symbol_information::Kind::Class)],
+        ..Default::default()
+    }
+}
+
 fn json_text(value: &Value) -> String {
     serde_json::to_string(value).unwrap()
 }
@@ -335,6 +381,13 @@ fn compact_refs_support_path_filtering_and_pagination() {
     assert_eq!(first["result"]["next_offset"], 1);
     let item = &result_items(&first)[0];
     assert_eq!(item["source"], "pkg.Alpha.run");
+    assert_eq!(item["source_selector"], ALPHA_RUN);
+    assert!(
+        item["target_selector"]
+            .as_str()
+            .unwrap()
+            .contains("example package")
+    );
     assert_eq!(item["evidence"]["document"], "pkg/models.py");
     assert!(item["evidence"].get("legacy_range").is_none());
 
@@ -353,6 +406,71 @@ fn compact_refs_support_path_filtering_and_pagination() {
     assert_eq!(second["result"]["offset"], 1);
     assert_eq!(second["result"]["returned"], 2);
     assert!(second["result"]["next_offset"].is_null());
+}
+
+#[test]
+fn recursive_references_are_deduplicated_without_losing_occurrences() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.index, recursive_index().write_to_bytes().unwrap()).unwrap();
+
+    let direct = fixture.success(&["refs", RECURSE, "--both", "--limit", "10"]);
+    assert_eq!(direct["result"]["total"], 4);
+
+    let database = fixture.root.join("recursive.sqlite");
+    let database_text = database.to_str().unwrap();
+    fixture.success(&["build-db", database_text]);
+    let sql = fixture.success(&[
+        "sql-refs",
+        database_text,
+        RECURSE,
+        "--both",
+        "--limit",
+        "10",
+    ]);
+    assert_eq!(sql["result"]["total"], 2);
+    let occurrence = result_items(&sql)
+        .iter()
+        .find(|item| item["relationship"].is_null())
+        .unwrap();
+    assert_eq!(occurrence["occurrences"], 3);
+    assert_eq!(occurrence["line"], 2);
+    assert_eq!(occurrence["column"], 6);
+}
+
+#[test]
+fn test_candidate_path_prefixes_are_literal_and_case_sensitive() {
+    let fixture = Fixture::new();
+    fs::write(
+        &fixture.index,
+        path_prefix_index().write_to_bytes().unwrap(),
+    )
+    .unwrap();
+    let database = fixture.root.join("prefix.sqlite");
+    let database_text = database.to_str().unwrap();
+    fixture.success(&["build-db", database_text]);
+
+    for (prefix, expected) in [
+        ("tests_/", "tests_/literal.py"),
+        ("tests%/", "tests%/literal.py"),
+        ("TESTS_/", "TESTS_/case.py"),
+    ] {
+        let candidates = fixture.success(&[
+            "test-candidates",
+            database_text,
+            ALPHA,
+            "--path",
+            prefix,
+            "--limit",
+            "10",
+        ]);
+        let items = result_items(&candidates);
+        assert_eq!(
+            items.len(),
+            1,
+            "unexpected candidates for {prefix}: {candidates}"
+        );
+        assert_eq!(items[0]["document"], expected);
+    }
 }
 
 #[test]
