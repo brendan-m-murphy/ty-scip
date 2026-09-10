@@ -17,7 +17,15 @@ fn emits_only_resolved_references_in_callee_position() {
     fs::create_dir_all(&root).expect("create project");
     fs::write(
         root.join("main.py"),
-        "def leaf():\n    return 1\n\ndef wrapper():\n    leaf()\n    saved = leaf\n    return saved\n",
+        concat!(
+            "def leaf():\n    return 1\n\n",
+            "class Worker:\n    def run(self):\n        return 2\n\n",
+            "def wrapper(worker: Worker):\n",
+            "    leaf()\n",
+            "    worker.run()\n",
+            "    saved = worker.run\n",
+            "    return saved\n",
+        ),
     )
     .expect("write source");
     let index = root.join("index.scip");
@@ -45,10 +53,14 @@ fn emits_only_resolved_references_in_callee_position() {
         format!("{:x}", Sha256::digest(index_bytes))
     );
     let facts = sidecar["facts"].as_array().expect("facts array");
-    assert_eq!(facts.len(), 1, "{facts:#?}");
-    assert_eq!(facts[0]["kind"], "callee_position");
-    assert_eq!(facts[0]["document"], "main.py");
-    assert_eq!(facts[0]["range"], serde_json::json!([4, 4, 8]));
+    assert_eq!(facts.len(), 2, "{facts:#?}");
+    assert!(
+        facts
+            .iter()
+            .all(|fact| fact["kind"] == "callee_position" && fact["document"] == "main.py")
+    );
+    assert_eq!(facts[0]["range"], serde_json::json!([8, 4, 8]));
+    assert_eq!(facts[1]["range"], serde_json::json!([9, 11, 14]));
     assert!(
         facts[0]["enclosing_symbol"]
             .as_str()
@@ -58,6 +70,11 @@ fn emits_only_resolved_references_in_callee_position() {
         facts[0]["symbol"]
             .as_str()
             .is_some_and(|symbol| symbol.ends_with("leaf()."))
+    );
+    assert!(
+        facts[1]["symbol"]
+            .as_str()
+            .is_some_and(|symbol| symbol.ends_with("Worker#run()."))
     );
 
     fs::remove_dir_all(root).expect("remove project");

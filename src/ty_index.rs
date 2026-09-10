@@ -61,7 +61,11 @@ struct CalleeRanges(Vec<TextRange>);
 impl<'ast> SourceOrderVisitor<'ast> for CalleeRanges {
     fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
         if let AnyNodeRef::ExprCall(call) = node {
-            self.0.push(call.func.range());
+            match call.func.as_ref() {
+                Expr::Name(name) => self.0.push(name.range()),
+                Expr::Attribute(attribute) => self.0.push(attribute.attr.range()),
+                _ => {}
+            }
         }
         TraversalSignal::Traverse
     }
