@@ -1,26 +1,19 @@
-//! Lossless, bounded queries over an in-memory SCIP index.
+//! Bounded, offline LSP-style queries over an in-memory SCIP index.
 //!
 //! [`QueryIndex`] retains the decoded [`scip::types::Index`] as its source of
-//! truth. The secondary maps in this module are navigation indexes only: they
-//! never rewrite references as calls or collapse occurrence and relationship
-//! evidence.
+//! truth. References remain SCIP references; calls are exposed only when a
+//! fingerprint-matched producer sidecar supplies resolved callee positions.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use protobuf::{Enum, Message};
 use scip::types::{Index, Occurrence, PositionEncoding, SymbolInformation, SymbolRole, occurrence};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-
-mod database;
-pub use database::{
-    DatabaseStats, SqlDatabase, SqlReferencePage, SqlSelectionError, SqlSymbolCandidate,
-    TestCandidateFilePage, TestCandidateFileSummary, TestCandidatePage, TestCandidateSummary,
-};
 
 /// Default cap used by composite responses such as [`QueryIndex::context`].
 pub const DEFAULT_LIMIT: usize = 100;
@@ -305,6 +298,16 @@ pub struct ReferenceView {
     pub evidence: ReferenceEvidence,
 }
 
+/// A resolved reference proven by the producer to occupy a call's callee.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct CallView {
+    pub caller: SymbolId,
+    pub callee: SymbolId,
+    pub document: String,
+    pub range: SourceRange,
+    pub provenance: &'static str,
+}
+
 /// A direct lexical member and the ownership evidence that produced it.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct MemberView {
@@ -313,38 +316,26 @@ pub struct MemberView {
     pub provenance: &'static str,
 }
 
-/// One node discovered by reverse reference traversal.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-pub struct AffectedView {
-    pub symbol: SymbolView,
-    pub depth: usize,
-    pub predecessor: ReferenceView,
-}
-
-/// Bounded shortest-path response.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct PathResult {
-    pub found: bool,
-    pub max_depth: usize,
-    pub steps: Page<ReferenceView>,
-}
-
 /// Errors at the protobuf, filesystem, or query boundary.
 #[derive(Debug)]
 pub enum QueryError {
     Protobuf(protobuf::Error),
+    Json(serde_json::Error),
     Io(std::io::Error),
     UnknownDocument(String),
     UnknownSymbol(String),
     InvalidPosition { line: usize, column: usize },
     UnsupportedPositionEncoding(i32),
     UnsafePath(String),
+    MissingCallFacts,
+    InvalidFacts(String),
 }
 
 impl fmt::Display for QueryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Protobuf(error) => write!(f, "invalid SCIP protobuf: {error}"),
+            Self::Json(error) => write!(f, "invalid ty facts JSON: {error}"),
             Self::Io(error) => write!(f, "I/O error: {error}"),
             Self::UnknownDocument(path) => write!(f, "document not found: {path}"),
             Self::UnknownSymbol(symbol) => write!(f, "symbol not found: {symbol}"),
@@ -355,6 +346,11 @@ impl fmt::Display for QueryError {
                 write!(f, "unsupported SCIP position encoding: {encoding}")
             }
             Self::UnsafePath(path) => write!(f, "document path escapes the project root: {path}"),
+            Self::MissingCallFacts => write!(
+                f,
+                "call hierarchy requires a synchronized ty facts sidecar (--facts PATH)"
+            ),
+            Self::InvalidFacts(message) => write!(f, "invalid ty facts: {message}"),
         }
     }
 }
@@ -371,6 +367,29 @@ impl From<std::io::Error> for QueryError {
     fn from(value: std::io::Error) -> Self {
         Self::Io(value)
     }
+}
+
+impl From<serde_json::Error> for QueryError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::Json(value)
+    }
+}
+
+#[derive(Deserialize)]
+struct TyFacts {
+    format: String,
+    version: u32,
+    index_sha256: String,
+    facts: Vec<TyFact>,
+}
+
+#[derive(Deserialize)]
+struct TyFact {
+    kind: String,
+    document: String,
+    range: Vec<i32>,
+    enclosing_symbol: String,
+    symbol: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -397,12 +416,27 @@ pub struct QueryIndex {
     relationships: Vec<RelationshipView>,
     outgoing: BTreeMap<SymbolId, Vec<ReferenceView>>,
     incoming: BTreeMap<SymbolId, Vec<ReferenceView>>,
+    calls: Vec<CallView>,
+    outgoing_calls: BTreeMap<SymbolId, Vec<CallView>>,
+    incoming_calls: BTreeMap<SymbolId, Vec<CallView>>,
+    call_facts_loaded: bool,
 }
 
 impl QueryIndex {
     /// Decode a `.scip` file and build its navigation indexes.
     pub fn load(path: impl AsRef<Path>, root: Option<PathBuf>) -> Result<Self, QueryError> {
         Self::from_bytes(&fs::read(path)?, root)
+    }
+
+    /// Decode a `.scip` file and join a fingerprint-matched ty facts sidecar.
+    pub fn load_with_facts(
+        path: impl AsRef<Path>,
+        facts: impl AsRef<Path>,
+        root: Option<PathBuf>,
+    ) -> Result<Self, QueryError> {
+        let mut index = Self::load(path, root)?;
+        index.load_facts(&fs::read(facts)?)?;
+        Ok(index)
     }
 
     /// Decode SCIP bytes and build their navigation indexes.
@@ -431,6 +465,10 @@ impl QueryIndex {
             relationships: Vec::new(),
             outgoing: BTreeMap::new(),
             incoming: BTreeMap::new(),
+            calls: Vec::new(),
+            outgoing_calls: BTreeMap::new(),
+            incoming_calls: BTreeMap::new(),
+            call_facts_loaded: false,
         };
         this.build();
         Ok(this)
@@ -722,71 +760,128 @@ impl QueryIndex {
         Page::new(items, limit)
     }
 
-    /// A deterministic shortest directed path through SCIP reference and
-    /// relationship evidence.
-    pub fn path(&self, from: &SymbolId, to: &SymbolId, max_depth: usize) -> PathResult {
-        if from == to {
-            return PathResult {
-                found: true,
-                max_depth,
-                steps: Page::new(Vec::new(), 0),
-            };
-        }
-        let mut queue = VecDeque::from([(from.clone(), Vec::<ReferenceView>::new())]);
-        let mut seen = BTreeSet::from([from.clone()]);
-        while let Some((node, path)) = queue.pop_front() {
-            if path.len() >= max_depth {
-                continue;
-            }
-            let mut edges = self.outgoing.get(&node).cloned().unwrap_or_default();
-            edges.sort();
-            for edge in edges {
-                let mut next_path = path.clone();
-                next_path.push(edge.clone());
-                if &edge.target == to {
-                    return PathResult {
-                        found: true,
-                        max_depth,
-                        steps: Page::new(next_path, usize::MAX),
-                    };
-                }
-                if seen.insert(edge.target.clone()) {
-                    queue.push_back((edge.target.clone(), next_path));
-                }
-            }
-        }
-        PathResult {
-            found: false,
-            max_depth,
-            steps: Page::new(Vec::new(), 0),
-        }
+    /// Direct supertypes from SCIP implementation relationships.
+    pub fn supertypes(&self, id: &SymbolId, limit: usize) -> Page<RelationshipView> {
+        Page::new(
+            self.relationships
+                .iter()
+                .filter(|relationship| relationship.source == *id && relationship.is_implementation)
+                .cloned()
+                .collect(),
+            limit,
+        )
     }
 
-    /// Reverse-reference change surface, bounded by depth and output count.
-    pub fn affected(&self, id: &SymbolId, max_depth: usize, limit: usize) -> Page<AffectedView> {
-        let mut queue = VecDeque::from([(id.clone(), 0usize)]);
-        let mut seen = BTreeSet::from([id.clone()]);
-        let mut items = Vec::new();
-        while let Some((node, depth)) = queue.pop_front() {
-            if depth >= max_depth {
-                continue;
-            }
-            let mut edges = self.incoming.get(&node).cloned().unwrap_or_default();
-            edges.sort();
-            for edge in edges {
-                if seen.insert(edge.source.clone()) {
-                    let next_depth = depth + 1;
-                    items.push(AffectedView {
-                        symbol: self.symbol_view(&edge.source),
-                        depth: next_depth,
-                        predecessor: edge.clone(),
-                    });
-                    queue.push_back((edge.source, next_depth));
-                }
-            }
+    /// Direct subtypes from SCIP implementation relationships.
+    pub fn subtypes(&self, id: &SymbolId, limit: usize) -> Page<RelationshipView> {
+        Page::new(
+            self.relationships
+                .iter()
+                .filter(|relationship| relationship.target == *id && relationship.is_implementation)
+                .cloned()
+                .collect(),
+            limit,
+        )
+    }
+
+    /// Direct calls made by `id`, backed only by synchronized producer facts.
+    pub fn callees(&self, id: &SymbolId, limit: usize) -> Result<Page<CallView>, QueryError> {
+        self.require_call_facts()?;
+        Ok(Page::new(
+            self.outgoing_calls.get(id).cloned().unwrap_or_default(),
+            limit,
+        ))
+    }
+
+    /// Direct calls to `id`, backed only by synchronized producer facts.
+    pub fn callers(&self, id: &SymbolId, limit: usize) -> Result<Page<CallView>, QueryError> {
+        self.require_call_facts()?;
+        Ok(Page::new(
+            self.incoming_calls.get(id).cloned().unwrap_or_default(),
+            limit,
+        ))
+    }
+
+    fn require_call_facts(&self) -> Result<(), QueryError> {
+        self.call_facts_loaded
+            .then_some(())
+            .ok_or(QueryError::MissingCallFacts)
+    }
+
+    fn load_facts(&mut self, bytes: &[u8]) -> Result<(), QueryError> {
+        let sidecar: TyFacts = serde_json::from_slice(bytes)?;
+        if sidecar.format != "ty-scip-facts" {
+            return Err(QueryError::InvalidFacts(format!(
+                "unsupported format {:?}",
+                sidecar.format
+            )));
         }
-        items.sort_by(|left, right| (left.depth, &left.symbol).cmp(&(right.depth, &right.symbol)));
-        Page::new(items, limit)
+        if sidecar.version != 1 {
+            return Err(QueryError::InvalidFacts(format!(
+                "unsupported version {}",
+                sidecar.version
+            )));
+        }
+        if sidecar.index_sha256 != self.index_sha256 {
+            return Err(QueryError::InvalidFacts(
+                "sidecar fingerprint does not match the SCIP index".to_owned(),
+            ));
+        }
+        for fact in sidecar.facts {
+            if fact.kind != "callee_position" {
+                return Err(QueryError::InvalidFacts(format!(
+                    "unsupported fact kind {:?}",
+                    fact.kind
+                )));
+            }
+            let range = SourceRange::parse(&fact.range).ok_or_else(|| {
+                QueryError::InvalidFacts(format!("invalid range {:?}", fact.range))
+            })?;
+            let caller = SymbolId::new(&fact.document, fact.enclosing_symbol);
+            let callee = SymbolId::new(&fact.document, fact.symbol);
+            if !self.symbols.contains_key(&caller) {
+                return Err(QueryError::InvalidFacts(format!(
+                    "unknown enclosing symbol {caller}"
+                )));
+            }
+            if !self.symbols.contains_key(&callee) {
+                return Err(QueryError::InvalidFacts(format!(
+                    "unknown target symbol {callee}"
+                )));
+            }
+            let occurrence_exists = self.occurrences.iter().any(|occurrence| {
+                occurrence.document == fact.document
+                    && occurrence.range == Some(range)
+                    && occurrence.symbol.as_ref() == Some(&callee)
+            });
+            if !occurrence_exists {
+                return Err(QueryError::InvalidFacts(format!(
+                    "callee occurrence is absent at {}:{:?}",
+                    fact.document, fact.range
+                )));
+            }
+            self.calls.push(CallView {
+                caller,
+                callee,
+                document: fact.document,
+                range,
+                provenance: "ty_scip_callee_position",
+            });
+        }
+        self.calls.sort();
+        self.calls.dedup();
+        for call in &self.calls {
+            self.outgoing_calls
+                .entry(call.caller.clone())
+                .or_default()
+                .push(call.clone());
+            self.incoming_calls
+                .entry(call.callee.clone())
+                .or_default()
+                .push(call.clone());
+        }
+        self.call_facts_loaded = true;
+        Ok(())
     }
 
     fn build(&mut self) {

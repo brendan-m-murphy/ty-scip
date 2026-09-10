@@ -1,133 +1,49 @@
-use std::{env, io, path::PathBuf, process::ExitCode};
+use std::{env, path::PathBuf, process::ExitCode};
 
 use scip_query::{
-    Page, QueryIndex, RefDirection, ReferenceEvidence, ReferenceView, Resolution, SqlDatabase,
-    SqlSelectionError, SymbolId, SymbolView,
+    Page, QueryIndex, RefDirection, ReferenceEvidence, ReferenceView, Resolution, SymbolId,
+    SymbolView,
 };
-use serde::Serialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 const DEFAULT_LIMIT: usize = 50;
-const DEFAULT_DEPTH: usize = 4;
-const DEFAULT_CANDIDATE_DEPTH: usize = 0;
 const USAGE: &str = r#"Usage:
-  scip-query --index INDEX.scip [--root PATH] [--limit N] COMMAND ...
-  scip-query [--root PATH] [--limit N] INDEX.scip COMMAND ...
-  scip-query sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both]
-             [--path PREFIX] [--offset N] [--limit N]
-  scip-query test-candidates DATABASE SELECTOR [--path PREFIX] [--depth N]
-             [--group-files] [--offset N] [--limit N]
-  scip-query sql-stats DATABASE
+  scip-query --index INDEX.scip [--facts INDEX.tyfacts] [--root PATH]
+             [--limit N] COMMAND ...
 
 Commands:
-  find QUERY [--path PATH] [--limit N]
-  at PATH:LINE[:COLUMN] [--limit N]
-  context SELECTOR
-  refs SELECTOR [--incoming|--outgoing|--both] [--path PREFIX] [--compact]
-       [--offset N] [--limit N]
-  members SELECTOR [--limit N]
-  path SOURCE TARGET [--max-depth N|--depth N] [--limit N]
-  affected SELECTOR [--max-depth N|--depth N] [--limit N]
-  build-db DATABASE
-  sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both] [--path PREFIX]
-           [--offset N] [--limit N]
-  test-candidates DATABASE SELECTOR [--path PREFIX] [--depth N] [--group-files]
-                  [--offset N] [--limit N]
-  sql-stats DATABASE
+  find QUERY [--path PREFIX]
+  at PATH:LINE[:COLUMN]
+  definition SELECTOR
+  hover SELECTOR
+  references SELECTOR [--path PREFIX] [--offset N]
+  members SELECTOR
+  callers SELECTOR
+  callees SELECTOR
+  supertypes SELECTOR
+  subtypes SELECTOR
 
-Selectors accept raw SCIP symbols and path-qualified names."#;
+Locations are 1-based. Output is deterministic JSON."#;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Cli {
-    index: Option<PathBuf>,
+    index: PathBuf,
+    facts: Option<PathBuf>,
     root: Option<PathBuf>,
-    command: Command,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum Command {
-    Find {
-        query: String,
-        path: Option<String>,
-        limit: usize,
-    },
-    At {
-        path: String,
-        line: usize,
-        column: Option<usize>,
-        limit: usize,
-    },
-    Context {
-        selector: String,
-        limit: usize,
-    },
-    Refs {
-        selector: String,
-        direction: Direction,
-        path: Option<String>,
-        compact: bool,
-        offset: usize,
-        limit: usize,
-    },
-    Members {
-        selector: String,
-        limit: usize,
-    },
-    Path {
-        source: String,
-        target: String,
-        depth: usize,
-        limit: usize,
-    },
-    Affected {
-        selector: String,
-        depth: usize,
-        limit: usize,
-    },
-    BuildDb {
-        database: PathBuf,
-    },
-    SqlRefs {
-        database: PathBuf,
-        selector: String,
-        direction: Direction,
-        path: Option<String>,
-        offset: usize,
-        limit: usize,
-    },
-    SqlStats {
-        database: PathBuf,
-    },
-    TestCandidates {
-        database: PathBuf,
-        selector: String,
-        path: String,
-        depth: usize,
-        group_files: bool,
-        offset: usize,
-        limit: usize,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Direction {
-    Incoming,
-    Outgoing,
-    Both,
-}
-
-enum ParseResult {
-    Help,
-    Run(Cli),
+    limit: usize,
+    command: String,
+    argument: String,
+    path: Option<String>,
+    offset: usize,
 }
 
 fn main() -> ExitCode {
     match parse(env::args().skip(1).collect()) {
-        Ok(ParseResult::Help) => {
+        Ok(None) => {
             println!("{USAGE}");
             ExitCode::SUCCESS
         }
-        Ok(ParseResult::Run(cli)) => match execute(cli) {
+        Ok(Some(cli)) => match execute(cli) {
             Ok(0) => ExitCode::SUCCESS,
             Ok(code) => ExitCode::from(code),
             Err(error) => {
@@ -142,173 +58,68 @@ fn main() -> ExitCode {
     }
 }
 
-fn parse(args: Vec<String>) -> Result<ParseResult, String> {
+fn parse(args: Vec<String>) -> Result<Option<Cli>, String> {
     if args.is_empty() || args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        return Ok(ParseResult::Help);
+        return Ok(None);
     }
-
     let mut index = None;
+    let mut facts = None;
     let mut root = None;
     let mut limit = DEFAULT_LIMIT;
     let mut position = 0;
     while position < args.len() && !is_command(&args[position]) {
         match args[position].as_str() {
             "--index" => index = Some(PathBuf::from(value(&args, &mut position, "--index")?)),
+            "--facts" => facts = Some(PathBuf::from(value(&args, &mut position, "--facts")?)),
             "--root" => root = Some(PathBuf::from(value(&args, &mut position, "--root")?)),
             "--limit" => limit = positive(&value(&args, &mut position, "--limit")?, "limit")?,
             option if option.starts_with('-') => return Err(format!("unknown option {option}")),
-            path if index.is_none() => index = Some(PathBuf::from(path)),
             argument => return Err(format!("expected a command, found {argument}")),
         }
         position += 1;
     }
-    let name = args
+    let command = args
         .get(position)
+        .filter(|command| is_command(command))
+        .cloned()
         .ok_or_else(|| "missing command".to_owned())?;
-    let command = parse_command(name, &args[position + 1..], limit)?;
-    if index.is_none()
-        && !matches!(
-            command,
-            Command::SqlRefs { .. } | Command::SqlStats { .. } | Command::TestCandidates { .. }
-        )
-    {
-        return Err("missing SCIP index (--index INDEX.scip)".to_owned());
-    }
-    Ok(ParseResult::Run(Cli {
-        index,
-        root,
-        command,
-    }))
-}
-
-fn parse_command(name: &str, args: &[String], default_limit: usize) -> Result<Command, String> {
-    let mut positional = Vec::new();
+    position += 1;
+    let argument = args
+        .get(position)
+        .filter(|argument| !argument.starts_with('-'))
+        .cloned()
+        .ok_or_else(|| format!("{command} requires one argument"))?;
+    position += 1;
     let mut path = None;
-    let mut limit = default_limit;
-    let mut depth = if name == "test-candidates" {
-        DEFAULT_CANDIDATE_DEPTH
-    } else {
-        DEFAULT_DEPTH
-    };
-    let mut direction = Direction::Both;
-    let mut direction_seen = false;
-    let mut compact = false;
-    let mut group_files = false;
     let mut offset = 0;
-    let mut position = 0;
     while position < args.len() {
         match args[position].as_str() {
-            "--limit" => limit = positive(&value(args, &mut position, "--limit")?, "limit")?,
-            "--path" if matches!(name, "find" | "refs" | "sql-refs" | "test-candidates") => {
-                path = Some(value(args, &mut position, "--path")?)
+            "--path" if matches!(command.as_str(), "find" | "references") => {
+                path = Some(value(&args, &mut position, "--path")?)
             }
-            "--compact" if name == "refs" => compact = true,
-            "--group-files" if name == "test-candidates" => group_files = true,
-            "--offset" if matches!(name, "refs" | "sql-refs" | "test-candidates") => {
-                offset = value(args, &mut position, "--offset")?
-                    .parse::<usize>()
+            "--offset" if command == "references" => {
+                offset = value(&args, &mut position, "--offset")?
+                    .parse()
                     .map_err(|_| "offset must be a non-negative integer".to_owned())?;
             }
-            "--depth" | "--max-depth"
-                if name == "path" || name == "affected" || name == "test-candidates" =>
-            {
-                let option = args[position].clone();
-                let value = value(args, &mut position, &option)?;
-                depth = if name == "test-candidates" {
-                    value
-                        .parse::<usize>()
-                        .map_err(|_| "depth must be a non-negative integer".to_owned())?
-                } else {
-                    positive(&value, "depth")?
-                };
-            }
-            "--incoming" | "--outgoing" | "--both" if name == "refs" || name == "sql-refs" => {
-                if direction_seen {
-                    return Err("choose only one refs direction".to_owned());
-                }
-                direction_seen = true;
-                direction = match args[position].as_str() {
-                    "--incoming" => Direction::Incoming,
-                    "--outgoing" => Direction::Outgoing,
-                    _ => Direction::Both,
-                };
-            }
+            "--limit" => limit = positive(&value(&args, &mut position, "--limit")?, "limit")?,
             option if option.starts_with('-') => {
-                return Err(format!("unknown option {option} for {name}"));
+                return Err(format!("unknown option {option} for {command}"));
             }
-            argument => positional.push(argument.to_owned()),
+            extra => return Err(format!("unexpected argument {extra} for {command}")),
         }
         position += 1;
     }
-
-    match (name, positional.as_slice()) {
-        ("find", [query]) => Ok(Command::Find {
-            query: query.clone(),
-            path,
-            limit,
-        }),
-        ("at", [location]) => {
-            let (path, line, column) = parse_location(location)?;
-            Ok(Command::At {
-                path,
-                line,
-                column,
-                limit,
-            })
-        }
-        ("context", [selector]) => Ok(Command::Context {
-            selector: selector.clone(),
-            limit,
-        }),
-        ("refs", [selector]) => Ok(Command::Refs {
-            selector: selector.clone(),
-            direction,
-            path,
-            compact,
-            offset,
-            limit,
-        }),
-        ("members", [selector]) => Ok(Command::Members {
-            selector: selector.clone(),
-            limit,
-        }),
-        ("path", [source, target]) => Ok(Command::Path {
-            source: source.clone(),
-            target: target.clone(),
-            depth,
-            limit,
-        }),
-        ("affected", [selector]) => Ok(Command::Affected {
-            selector: selector.clone(),
-            depth,
-            limit,
-        }),
-        ("build-db", [database]) => Ok(Command::BuildDb {
-            database: PathBuf::from(database),
-        }),
-        ("sql-refs", [database, selector]) => Ok(Command::SqlRefs {
-            database: PathBuf::from(database),
-            selector: selector.clone(),
-            direction,
-            path,
-            offset,
-            limit,
-        }),
-        ("sql-stats", [database]) => Ok(Command::SqlStats {
-            database: PathBuf::from(database),
-        }),
-        ("test-candidates", [database, selector]) => Ok(Command::TestCandidates {
-            database: PathBuf::from(database),
-            selector: selector.clone(),
-            path: path.unwrap_or_else(|| "tests/".to_owned()),
-            depth,
-            group_files,
-            offset,
-            limit,
-        }),
-        (known, _) if is_command(known) => Err(format!("wrong number of arguments for {known}")),
-        _ => Err(format!("unknown command {name}")),
-    }
+    Ok(Some(Cli {
+        index: index.ok_or_else(|| "missing SCIP index (--index INDEX.scip)".to_owned())?,
+        facts,
+        root,
+        limit,
+        command,
+        argument,
+        path,
+        offset,
+    }))
 }
 
 fn is_command(value: &str) -> bool {
@@ -316,15 +127,14 @@ fn is_command(value: &str) -> bool {
         value,
         "find"
             | "at"
-            | "context"
-            | "refs"
+            | "definition"
+            | "hover"
+            | "references"
             | "members"
-            | "path"
-            | "affected"
-            | "build-db"
-            | "sql-refs"
-            | "test-candidates"
-            | "sql-stats"
+            | "callers"
+            | "callees"
+            | "supertypes"
+            | "subtypes"
     )
 }
 
@@ -341,6 +151,120 @@ fn positive(value: &str, label: &str) -> Result<usize, String> {
         .ok()
         .filter(|value| *value > 0)
         .ok_or_else(|| format!("{label} must be a positive integer"))
+}
+
+fn execute(cli: Cli) -> Result<u8, String> {
+    let facts = cli.facts.or_else(|| {
+        let candidate = cli.index.with_extension("tyfacts");
+        candidate.is_file().then_some(candidate)
+    });
+    let index = match facts.as_ref() {
+        Some(facts) => QueryIndex::load_with_facts(&cli.index, facts, cli.root),
+        None => QueryIndex::load(&cli.index, cli.root),
+    }
+    .map_err(|error| error.to_string())?;
+
+    if cli.command == "find" {
+        let result = index.find_in(&cli.argument, cli.path.as_deref(), cli.limit);
+        emit(&json!({
+            "command": "find",
+            "path": cli.path,
+            "query": cli.argument,
+            "result": result,
+            "status": "ok",
+        }))?;
+        return Ok(0);
+    }
+    if cli.command == "at" {
+        let (path, line, column) = parse_location(&cli.argument)?;
+        let result = index
+            .at(&path, line, column, cli.limit)
+            .map_err(|error| error.to_string())?;
+        emit(&json!({
+            "command": "at",
+            "location": {"path": path, "line": line, "column": column},
+            "result": result,
+            "status": "ok",
+        }))?;
+        return Ok(0);
+    }
+
+    let symbol = match select(&index, &cli.argument, cli.limit) {
+        Ok(symbol) => symbol,
+        Err(failure) => return emit_selection_failure(&cli.command, &cli.argument, failure),
+    };
+    let result = match cli.command.as_str() {
+        "definition" => {
+            let context = index
+                .context_with_limit(&symbol.id, 0, 0, cli.limit)
+                .map_err(|error| error.to_string())?;
+            json!({
+                "definitions": context.definitions,
+                "snippets": context.snippets,
+                "snippet_failures": context.snippet_failures,
+            })
+        }
+        "hover" => {
+            let context = index
+                .context_with_limit(&symbol.id, 0, 0, cli.limit)
+                .map_err(|error| error.to_string())?;
+            json!({
+                "documentation": context.documentation,
+                "signatures": context.signatures,
+                "symbol": context.symbol,
+            })
+        }
+        "references" => {
+            let mut items = index
+                .refs(&symbol.id, RefDirection::Incoming, usize::MAX)
+                .items;
+            if let Some(prefix) = cli.path.as_deref() {
+                items.retain(|reference| {
+                    reference_document(reference)
+                        .is_some_and(|document| document.starts_with(prefix))
+                });
+            }
+            let total = items.len();
+            let items = items
+                .iter()
+                .skip(cli.offset)
+                .take(cli.limit)
+                .map(|reference| compact_reference(&index, reference))
+                .collect::<Vec<_>>();
+            let returned = items.len();
+            let next_offset = (cli.offset + returned < total).then_some(cli.offset + returned);
+            json!({
+                "items": items,
+                "next_offset": next_offset,
+                "offset": cli.offset,
+                "returned": returned,
+                "total": total,
+                "truncated": next_offset.is_some(),
+            })
+        }
+        "members" => json!(index.members(&symbol.id, cli.limit)),
+        "callers" => json!(
+            index
+                .callers(&symbol.id, cli.limit)
+                .map_err(|error| error.to_string())?
+        ),
+        "callees" => json!(
+            index
+                .callees(&symbol.id, cli.limit)
+                .map_err(|error| error.to_string())?
+        ),
+        "supertypes" => json!(index.supertypes(&symbol.id, cli.limit)),
+        "subtypes" => json!(index.subtypes(&symbol.id, cli.limit)),
+        _ => unreachable!(),
+    };
+    emit(&json!({
+        "command": cli.command,
+        "resolved": symbol.id,
+        "result": result,
+        "selector": cli.argument,
+        "status": "ok",
+    }))?;
+    Ok(0)
 }
 
 fn parse_location(location: &str) -> Result<(String, usize, Option<usize>), String> {
@@ -362,325 +286,6 @@ fn parse_location(location: &str) -> Result<(String, usize, Option<usize>), Stri
     Ok((head.to_owned(), last, None))
 }
 
-fn execute(cli: Cli) -> Result<u8, String> {
-    if let Command::SqlRefs {
-        database,
-        selector,
-        direction,
-        path,
-        offset,
-        limit,
-    } = &cli.command
-    {
-        let database = SqlDatabase::open(database).map_err(|error| error.to_string())?;
-        let (direction_name, direction) = ref_direction(*direction);
-        let (resolved, result) =
-            match database.refs(selector, direction, path.as_deref(), *offset, *limit) {
-                Ok(result) => result,
-                Err(error) => return emit_sql_selection_failure("sql-refs", selector, error),
-            };
-        emit(&json!({
-            "command": "sql-refs",
-            "database": database_path(&cli.command),
-            "direction": direction_name,
-            "path": path,
-            "resolved": resolved,
-            "result": result,
-            "selector": selector,
-            "status": "ok",
-        }))?;
-        return Ok(0);
-    }
-    if let Command::TestCandidates {
-        database,
-        selector,
-        path,
-        depth,
-        group_files,
-        offset,
-        limit,
-    } = &cli.command
-    {
-        let sql = SqlDatabase::open_with_root(database, cli.root.clone())
-            .map_err(|error| error.to_string())?;
-        if *group_files {
-            let (resolved, result) =
-                match sql.test_candidate_files(selector, path, *depth, *offset, *limit) {
-                    Ok(result) => result,
-                    Err(error) => {
-                        return emit_sql_selection_failure("test-candidates", selector, error);
-                    }
-                };
-            emit(&json!({
-                "command": "test-candidates",
-                "database": database,
-                "group_by": "file",
-                "path": path,
-                "max_depth": depth,
-                "resolved": resolved,
-                "result": result,
-                "selector": selector,
-                "status": "ok",
-            }))?;
-        } else {
-            let (resolved, result) =
-                match sql.test_candidates(selector, path, *depth, *offset, *limit) {
-                    Ok(result) => result,
-                    Err(error) => {
-                        return emit_sql_selection_failure("test-candidates", selector, error);
-                    }
-                };
-            emit(&json!({
-                "command": "test-candidates",
-                "database": database,
-                "group_by": "occurrence",
-                "path": path,
-                "max_depth": depth,
-                "resolved": resolved,
-                "result": result,
-                "selector": selector,
-                "status": "ok",
-            }))?;
-        }
-        return Ok(0);
-    }
-    if let Command::SqlStats { database } = &cli.command {
-        let result = SqlDatabase::open(database)
-            .and_then(|database| database.stats())
-            .map_err(|error| error.to_string())?;
-        emit(&json!({
-            "command": "sql-stats",
-            "database": database,
-            "result": result,
-            "status": "ok",
-        }))?;
-        return Ok(0);
-    }
-    let index_path = cli
-        .index
-        .as_ref()
-        .ok_or_else(|| "missing SCIP index (--index INDEX.scip)".to_owned())?;
-    let index = QueryIndex::load(index_path, cli.root).map_err(|error| error.to_string())?;
-    match cli.command {
-        Command::Find { query, path, limit } => {
-            let result = index.find_in(&query, path.as_deref(), limit);
-            emit(&json!({
-                "command": "find",
-                "path": path,
-                "query": query,
-                "result": result,
-                "status": "ok",
-            }))?;
-        }
-        Command::At {
-            path,
-            line,
-            column,
-            limit,
-        } => {
-            let result = index
-                .at(&path, line, column, limit)
-                .map_err(|error| error.to_string())?;
-            emit(&json!({
-                "command": "at",
-                "location": { "column": column, "line": line, "path": path },
-                "result": result,
-                "status": "ok",
-            }))?;
-        }
-        Command::Context { selector, limit } => {
-            let symbol = match select(&index, &selector, None, limit) {
-                Ok(symbol) => symbol,
-                Err(failure) => {
-                    return emit_selection_failure("context", "selector", &selector, failure);
-                }
-            };
-            let result = index
-                .context_with_limit(&symbol.id, 3, 3, limit)
-                .map_err(|error| error.to_string())?;
-            emit(&json!({
-                "command": "context",
-                "resolved": symbol.id,
-                "result": result,
-                "selector": selector,
-                "status": "ok",
-            }))?;
-        }
-        Command::Refs {
-            selector,
-            direction,
-            path,
-            compact,
-            offset,
-            limit,
-        } => {
-            let symbol = match select(&index, &selector, None, limit) {
-                Ok(symbol) => symbol,
-                Err(failure) => {
-                    return emit_selection_failure("refs", "selector", &selector, failure);
-                }
-            };
-            let (direction_name, direction) = match direction {
-                Direction::Incoming => ("incoming", RefDirection::Incoming),
-                Direction::Outgoing => ("outgoing", RefDirection::Outgoing),
-                Direction::Both => ("both", RefDirection::Both),
-            };
-            let mut items = index.refs(&symbol.id, direction, usize::MAX).items;
-            if let Some(prefix) = path.as_deref() {
-                items.retain(|reference| {
-                    reference_document(reference)
-                        .is_some_and(|document| document.starts_with(prefix))
-                });
-            }
-            let total = items.len();
-            let items: Vec<_> = items.into_iter().skip(offset).take(limit).collect();
-            let returned = items.len();
-            let next_offset = (offset + returned < total).then_some(offset + returned);
-            let items = if compact {
-                items
-                    .iter()
-                    .map(|reference| compact_reference(&index, reference))
-                    .collect::<Vec<_>>()
-            } else {
-                items.iter().map(|reference| json!(reference)).collect()
-            };
-            emit(&json!({
-                "compact": compact,
-                "command": "refs",
-                "direction": direction_name,
-                "path": path,
-                "resolved": symbol.id,
-                "result": {
-                    "items": items,
-                    "next_offset": next_offset,
-                    "offset": offset,
-                    "returned": returned,
-                    "total": total,
-                    "truncated": next_offset.is_some(),
-                },
-                "selector": selector,
-                "status": "ok",
-            }))?;
-        }
-        Command::Members { selector, limit } => {
-            let symbol = match select(&index, &selector, None, limit) {
-                Ok(symbol) => symbol,
-                Err(failure) => {
-                    return emit_selection_failure("members", "selector", &selector, failure);
-                }
-            };
-            let result = index.members(&symbol.id, limit);
-            emit(&json!({
-                "command": "members",
-                "resolved": symbol.id,
-                "result": result,
-                "selector": selector,
-                "status": "ok",
-            }))?;
-        }
-        Command::Path {
-            source,
-            target,
-            depth,
-            limit,
-        } => {
-            let source_symbol = match select(&index, &source, None, limit) {
-                Ok(symbol) => symbol,
-                Err(failure) => return emit_selection_failure("path", "source", &source, failure),
-            };
-            let target_symbol = match select(&index, &target, None, limit) {
-                Ok(symbol) => symbol,
-                Err(failure) => return emit_selection_failure("path", "target", &target, failure),
-            };
-            let result = index.path(&source_symbol.id, &target_symbol.id, depth);
-            emit(&json!({
-                "command": "path",
-                "result": result,
-                "source": { "resolved": source_symbol.id, "selector": source },
-                "status": "ok",
-                "target": { "resolved": target_symbol.id, "selector": target },
-            }))?;
-        }
-        Command::Affected {
-            selector,
-            depth,
-            limit,
-        } => {
-            let symbol = match select(&index, &selector, None, limit) {
-                Ok(symbol) => symbol,
-                Err(failure) => {
-                    return emit_selection_failure("affected", "selector", &selector, failure);
-                }
-            };
-            let result = index.affected(&symbol.id, depth, limit);
-            emit(&json!({
-                "command": "affected",
-                "max_depth": depth,
-                "resolved": symbol.id,
-                "result": result,
-                "selector": selector,
-                "status": "ok",
-            }))?;
-        }
-        Command::BuildDb { database } => {
-            let result = index
-                .write_database(&database)
-                .map_err(|error| error.to_string())?;
-            emit(&json!({
-                "command": "build-db",
-                "database": database,
-                "result": result,
-                "status": "ok",
-            }))?;
-        }
-        Command::SqlRefs { .. } | Command::SqlStats { .. } | Command::TestCandidates { .. } => {
-            unreachable!()
-        }
-    }
-    Ok(0)
-}
-
-fn ref_direction(direction: Direction) -> (&'static str, RefDirection) {
-    match direction {
-        Direction::Incoming => ("incoming", RefDirection::Incoming),
-        Direction::Outgoing => ("outgoing", RefDirection::Outgoing),
-        Direction::Both => ("both", RefDirection::Both),
-    }
-}
-
-fn database_path(command: &Command) -> Option<&PathBuf> {
-    match command {
-        Command::SqlRefs { database, .. }
-        | Command::SqlStats { database }
-        | Command::TestCandidates { database, .. } => Some(database),
-        _ => None,
-    }
-}
-
-fn emit_sql_selection_failure(
-    command: &str,
-    selector: &str,
-    error: Box<dyn std::error::Error + Send + Sync>,
-) -> Result<u8, String> {
-    let Some(selection) = error.downcast_ref::<SqlSelectionError>() else {
-        return Err(error.to_string());
-    };
-    match selection {
-        SqlSelectionError::Ambiguous { candidates, .. } => emit(&json!({
-            "candidates": candidates,
-            "command": command,
-            "selector": selector,
-            "status": "ambiguous",
-        }))?,
-        SqlSelectionError::NotFound { .. } => emit(&json!({
-            "command": command,
-            "selector": selector,
-            "status": "not_found",
-        }))?,
-    }
-    Ok(2)
-}
-
 enum SelectionFailure {
     Ambiguous(Page<SymbolView>),
     NotFound(Page<SymbolView>),
@@ -689,15 +294,18 @@ enum SelectionFailure {
 fn select(
     index: &QueryIndex,
     selector: &str,
-    document: Option<&str>,
     limit: usize,
 ) -> Result<SymbolView, SelectionFailure> {
-    match index.resolve(selector, document, limit) {
+    match index.resolve(selector, None, limit) {
         Resolution::Found { symbol } => Ok(symbol),
         Resolution::Ambiguous { candidates, .. } => Err(SelectionFailure::Ambiguous(candidates)),
         Resolution::NotFound { .. } => {
-            if let Some(alias) = hash_selector_alias(selector) {
-                match index.resolve(&alias, document, limit) {
+            let alias = selector
+                .rsplit_once('#')
+                .filter(|(owner, member)| !owner.is_empty() && !member.is_empty())
+                .map(|(owner, member)| format!("{owner}.{member}"));
+            if let Some(alias) = alias {
+                match index.resolve(&alias, None, limit) {
                     Resolution::Found { symbol } => return Ok(symbol),
                     Resolution::Ambiguous { candidates, .. } => {
                         return Err(SelectionFailure::Ambiguous(candidates));
@@ -715,12 +323,26 @@ fn select(
     }
 }
 
-fn hash_selector_alias(selector: &str) -> Option<String> {
-    if selector.contains(' ') {
-        return None;
+fn emit_selection_failure(
+    command: &str,
+    selector: &str,
+    failure: SelectionFailure,
+) -> Result<u8, String> {
+    match failure {
+        SelectionFailure::Ambiguous(candidates) => emit(&json!({
+            "candidates": candidates,
+            "command": command,
+            "selector": selector,
+            "status": "ambiguous",
+        }))?,
+        SelectionFailure::NotFound(suggestions) => emit(&json!({
+            "command": command,
+            "selector": selector,
+            "status": "not_found",
+            "suggestions": suggestions,
+        }))?,
     }
-    let (owner, member) = selector.rsplit_once('#')?;
-    (!owner.is_empty() && !member.is_empty()).then(|| format!("{owner}.{member}"))
+    Ok(2)
 }
 
 fn reference_document(reference: &ReferenceView) -> Option<&str> {
@@ -730,20 +352,12 @@ fn reference_document(reference: &ReferenceView) -> Option<&str> {
     }
 }
 
-fn symbol_label(index: &QueryIndex, id: &SymbolId) -> String {
-    match index.resolve(&id.canonical(), None, 1) {
-        Resolution::Found { symbol } => symbol.qualified_name,
-        _ => id.canonical(),
-    }
-}
-
-fn compact_reference(index: &QueryIndex, reference: &ReferenceView) -> serde_json::Value {
+fn compact_reference(index: &QueryIndex, reference: &ReferenceView) -> Value {
     let evidence = match &reference.evidence {
         ReferenceEvidence::Occurrence { occurrence } => json!({
             "column": occurrence.range.map(|range| range.start.character + 1),
             "document": occurrence.document,
             "line": occurrence.range.map(|range| range.start.line + 1),
-            "provenance": occurrence.provenance,
             "roles": occurrence.role_names,
         }),
         ReferenceEvidence::Relationship { relationship } => json!({
@@ -752,46 +366,25 @@ fn compact_reference(index: &QueryIndex, reference: &ReferenceView) -> serde_jso
             "is_implementation": relationship.is_implementation,
             "is_reference": relationship.is_reference,
             "is_type_definition": relationship.is_type_definition,
-            "provenance": relationship.provenance,
         }),
     };
     json!({
         "evidence": evidence,
         "source": symbol_label(index, &reference.source),
-        "source_selector": reference.source.canonical(),
-        "target": symbol_label(index, &reference.target),
-        "target_selector": reference.target.canonical(),
+        "source_id": reference.source,
     })
 }
 
-fn emit_selection_failure(
-    command: &str,
-    role: &str,
-    selector: &str,
-    failure: SelectionFailure,
-) -> Result<u8, String> {
-    match failure {
-        SelectionFailure::Ambiguous(candidates) => emit(&json!({
-            "candidates": candidates,
-            "command": command,
-            "selector": selector,
-            "selector_role": role,
-            "status": "ambiguous",
-        }))?,
-        SelectionFailure::NotFound(suggestions) => emit(&json!({
-            "command": command,
-            "selector": selector,
-            "selector_role": role,
-            "status": "not_found",
-            "suggestions": suggestions,
-        }))?,
+fn symbol_label(index: &QueryIndex, id: &SymbolId) -> String {
+    match index.resolve(&id.canonical(), None, 1) {
+        Resolution::Found { symbol } => symbol.qualified_name,
+        _ => id.canonical(),
     }
-    Ok(2)
 }
 
-fn emit(value: &impl Serialize) -> Result<(), String> {
-    serde_json::to_writer(io::stdout().lock(), value)
-        .map_err(|error| format!("cannot encode JSON: {error}"))?;
+fn emit(value: &impl serde::Serialize) -> Result<(), String> {
+    serde_json::to_writer_pretty(std::io::stdout().lock(), value)
+        .map_err(|error| error.to_string())?;
     println!();
     Ok(())
 }
@@ -801,178 +394,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_named_index_and_command_options() {
-        let ParseResult::Run(cli) = parse(vec![
-            "--index".into(),
-            "index.scip".into(),
-            "--root".into(),
-            ".".into(),
-            "refs".into(),
-            "pkg/a.py:A.f".into(),
-            "--outgoing".into(),
-            "--limit".into(),
-            "12".into(),
-        ])
-        .expect("parse") else {
-            panic!("expected runnable command");
-        };
-        assert_eq!(cli.index, Some(PathBuf::from("index.scip")));
-        assert_eq!(cli.root, Some(PathBuf::from(".")));
-        assert_eq!(
-            cli.command,
-            Command::Refs {
-                selector: "pkg/a.py:A.f".into(),
-                direction: Direction::Outgoing,
-                path: None,
-                compact: false,
-                offset: 0,
-                limit: 12,
-            }
-        );
+    fn parses_the_small_command_surface() {
+        let cli = parse(
+            [
+                "--index",
+                "index.scip",
+                "--facts",
+                "index.tyfacts",
+                "references",
+                "Thing.run",
+                "--path",
+                "tests/",
+                "--offset",
+                "5",
+                "--limit",
+                "10",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(cli.command, "references");
+        assert_eq!(cli.path.as_deref(), Some("tests/"));
+        assert_eq!(cli.offset, 5);
+        assert_eq!(cli.limit, 10);
     }
 
     #[test]
-    fn parses_positional_index_and_location() {
-        let ParseResult::Run(cli) = parse(vec![
-            "index.scip".into(),
-            "at".into(),
-            "pkg/a.py:7:3".into(),
-        ])
-        .expect("parse") else {
-            panic!("expected runnable command");
-        };
-        assert_eq!(
-            cli.command,
-            Command::At {
-                path: "pkg/a.py".into(),
-                line: 7,
-                column: Some(3),
-                limit: DEFAULT_LIMIT,
-            }
-        );
-    }
-
-    #[test]
-    fn keeps_line_only_location_distinct_from_exact_position() {
-        let ParseResult::Run(cli) =
-            parse(vec!["index.scip".into(), "at".into(), "pkg/a.py:7".into()]).expect("parse")
-        else {
-            panic!("expected runnable command");
-        };
-        assert_eq!(
-            cli.command,
-            Command::At {
-                path: "pkg/a.py".into(),
-                line: 7,
-                column: None,
-                limit: DEFAULT_LIMIT,
-            }
-        );
-    }
-
-    #[test]
-    fn rejects_conflicting_reference_directions() {
-        let error = parse(vec![
-            "index.scip".into(),
-            "refs".into(),
-            "symbol".into(),
-            "--incoming".into(),
-            "--outgoing".into(),
-        ])
-        .err()
-        .expect("error");
-        assert!(error.contains("only one"));
-    }
-
-    #[test]
-    fn parses_sql_query_without_scip_index() {
-        let ParseResult::Run(cli) = parse(vec![
-            "sql-refs".into(),
-            "cache.sqlite".into(),
-            "pkg.Alpha#run".into(),
-            "--outgoing".into(),
-            "--path".into(),
-            "tests/".into(),
-            "--offset".into(),
-            "2".into(),
-        ])
-        .expect("parse") else {
-            panic!("expected runnable command");
-        };
-        assert_eq!(cli.index, None);
-        assert_eq!(
-            cli.command,
-            Command::SqlRefs {
-                database: PathBuf::from("cache.sqlite"),
-                selector: "pkg.Alpha#run".into(),
-                direction: Direction::Outgoing,
-                path: Some("tests/".into()),
-                offset: 2,
-                limit: DEFAULT_LIMIT,
-            }
-        );
-    }
-
-    #[test]
-    fn parses_test_candidates_with_default_path_and_direct_depth() {
-        let ParseResult::Run(cli) = parse(vec![
-            "test-candidates".into(),
-            "cache.sqlite".into(),
-            "BaseStore".into(),
-        ])
-        .expect("parse") else {
-            panic!("expected runnable command");
-        };
-        assert_eq!(cli.index, None);
-        assert_eq!(
-            cli.command,
-            Command::TestCandidates {
-                database: PathBuf::from("cache.sqlite"),
-                selector: "BaseStore".into(),
-                path: "tests/".into(),
-                depth: DEFAULT_CANDIDATE_DEPTH,
-                group_files: false,
-                offset: 0,
-                limit: DEFAULT_LIMIT,
-            }
-        );
-    }
-
-    #[test]
-    fn parses_explicit_test_candidate_depth() {
-        let ParseResult::Run(cli) = parse(vec![
-            "test-candidates".into(),
-            "cache.sqlite".into(),
-            "BaseStore".into(),
-            "--depth".into(),
-            "2".into(),
-        ])
-        .expect("parse") else {
-            panic!("expected runnable command");
-        };
-        assert!(matches!(
-            cli.command,
-            Command::TestCandidates { depth: 2, .. }
-        ));
-    }
-
-    #[test]
-    fn parses_file_grouped_test_candidates() {
-        let ParseResult::Run(cli) = parse(vec![
-            "test-candidates".into(),
-            "cache.sqlite".into(),
-            "BaseStore".into(),
-            "--group-files".into(),
-        ])
-        .expect("parse") else {
-            panic!("expected runnable command");
-        };
-        assert!(matches!(
-            cli.command,
-            Command::TestCandidates {
-                group_files: true,
-                ..
-            }
-        ));
+    fn rejects_removed_graph_commands() {
+        let error = parse(
+            ["--index", "index.scip", "affected", "Thing"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        )
+        .unwrap_err();
+        assert_eq!(error, "expected a command, found affected");
     }
 }

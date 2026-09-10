@@ -80,6 +80,13 @@ syntactic `CALLEE_POSITION`, not graph policy or a claimed runtime call.
 
 ## Product directions after the query benchmark
 
+The immediate product direction has since been narrowed to an offline LSP-style
+tool: `find`, `at`, `definition`, `hover`, `references`, `members`, type
+hierarchy, and producer-backed `callers`/`callees`. The experimental SQLite test
+projection, transitive `path`/`affected` queries, and architecture inference are
+not part of that minimal tool. Keep this section as a record of possible later
+experiments rather than its implementation backlog.
+
 The benchmark supports three complementary interfaces over the same lossless
 SCIP authority. They should not be collapsed into one large default response.
 

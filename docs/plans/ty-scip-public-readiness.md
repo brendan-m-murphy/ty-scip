@@ -67,10 +67,11 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
    stable API as a narrow Astral request.
 6. Keep all ty/Ruff extraction here: bulk resolved occurrences, project-walk
    diagnostics, installed-distribution ownership, upward method overrides, and
-   Ruff-proven callee positions. Use standard SCIP fields when their semantics
-   match exactly. Reserve an optional synchronized producer sidecar for a
-   demonstrated useful observation SCIP cannot express; the first candidate is
-   syntactic `CALLEE_POSITION`, not graph policy or a claimed runtime call.
+   Ruff-proven callee positions. `ty-scip --facts PATH` now emits the first
+   optional sidecar fact: a resolved target at the callable token of a Python
+   call, its source range, and its enclosing symbol. The sidecar is SHA-256
+   matched to the exact SCIP bytes. Keep future facts equally narrow and use
+   standard SCIP fields whenever their semantics match exactly.
 7. For architecture consumers, preserve enough producer evidence to distinguish
    imports, ordinary reads, callable references, proven callee positions,
    ownership, inheritance, and re-exports. Do not emit downstream labels such
