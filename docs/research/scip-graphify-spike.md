@@ -156,3 +156,19 @@ next evaluation should freeze the tool first, use unseen tasks (preferably in
 another repository), interleave at least three replicates with plain `rg`, and
 score retrieval precision separately from which retrieved facts the agent
 chooses to mention.
+
+## Consolidation decision
+
+Treat the lossless query/SQLite implementation as the candidate successor to
+the Graphify JSON prototype, not as a second permanent normalization engine.
+Do not introduce a shared abstraction merely to preserve both implementations.
+If Graphify interoperability remains useful, add a compact export over the
+normalized cache, pin one real-Graphify compatibility test, migrate any unique
+fixtures, and then remove `tools/scip-graphify`.
+
+The consumer should ultimately be released outside the `ty-scip` producer.
+It consumes standard SCIP, must remain usable with indexes from `scip-python`,
+and must not import ty/Ruff internals. `ty-scip` should emit standard SCIP plus
+an optional synchronized facts sidecar only for evidence standard SCIP cannot
+represent, such as resolved callee-position facts. The downstream query/skill
+project may join that sidecar without making it mandatory.
