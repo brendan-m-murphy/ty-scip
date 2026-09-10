@@ -307,6 +307,12 @@ remove constructor/`__call__` expansion without a first-target heuristic.
   Installed third-party symbols remain deferred because the public API does
   not expose complete distribution ownership and version evidence; import-name
   guessing would produce false package identities.
+- **2026-09-10:** Extended external symbol emission to runtime modules resolved
+  through site-packages and editable search paths. These use the stable
+  top-level import name and an empty version rather than guessing a Python
+  distribution. Their occurrences now participate in the synchronized
+  callee-position sidecar, allowing offline call hierarchy to retain calls such
+  as `fsspec.open_files`; a synthetic environment fixture covers the boundary.
 - **2026-09-09:** Made selected-source read failures fatal before SCIP emission.
   Invalid UTF-8 and other `SourceText` read errors now name the affected file,
   exit unsuccessfully, and neither create nor replace the output path; a

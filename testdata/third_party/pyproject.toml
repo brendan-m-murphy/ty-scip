@@ -1,0 +1,7 @@
+[project]
+name = "third-party-consumer"
+version = "1.0.0"
+
+[tool.ty.environment]
+python = "../third_party_environment"
+python-version = "3.12"

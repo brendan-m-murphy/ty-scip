@@ -40,8 +40,8 @@ plan.
 | Overloads and repeated definitions | Co-definitions normalize when they resolve to one durable symbol | Supported through Pyright declaration identity |
 | Instance attributes | Promoted when ty proves a receiver attribute in a direct method with normal inferred receiver semantics, including identity-preserving decorators; inherited reads resolve | Broader handling through Pyright's class/member model |
 | Imports and aliases | Relative, aliased, dotted, submodule, and `__init__.py` re-export targets when unambiguous; dynamic/wildcard edge cases are not claimed | More mature import, alias, and re-export handling |
-| Package identity | One first-party PEP 621 or explicit name/version for the whole index, plus configured-version `python-stdlib` identities | First-party, standard-library, and installed-distribution identities |
-| External links | Proven runtime standard-library symbols, overloads, and callable parameters are emitted; typing-only and installed third-party targets are counted and omitted | Standard-library and third-party symbols can be emitted |
+| Package identity | One first-party PEP 621 or explicit name/version for the whole index, configured-version `python-stdlib` identities, and import-root identities for installed packages | First-party, standard-library, and installed-distribution identities |
+| External links | Proven runtime standard-library and installed-package symbols, overloads, and callable parameters are emitted; typing-only targets are omitted | Standard-library and third-party symbols can be emitted |
 | Occurrence roles | Definition, import, read, write, and augmented read/write | Definition and read |
 | Symbol information | Kind including semantically verified properties and modern type aliases, display name, raw ty docstrings, source-faithful callable/class/annotated-assignment/type-alias signatures, and enclosing ranges | Emits rendered documentation and signatures through Pyright internals |
 | Inheritance and overrides | Direct first-party class bases are emitted as implementation relationships; inherited reads resolve | Emits class/implementation relationships, including richer internal cases |
@@ -71,8 +71,10 @@ Package identity precedence is:
 
 Dynamic versions are not executed or imported. A module that ty proves belongs
 to the runtime standard library uses `python-stdlib` and ty's configured Python
-major/minor version; typing-only modules such as `_typeshed` are excluded.
-Multi-distribution monorepos, editable-install ownership, and installed
+major/minor version. Runtime modules resolved through site-packages or editable
+search paths use their top-level import name with an empty version because ty's
+public API does not expose distribution metadata. Typing-only modules such as
+`_typeshed` are excluded. Multi-distribution monorepos and installed
 distribution ownership are not implemented.
 
 Named nested functions and classes use stable lexical global symbols. Other
@@ -89,7 +91,7 @@ Resolution outcomes mean:
 - **ambiguous**: distinct first-party or mixed targets remained after safe
   binding and overload normalization;
 - **external**: every target was outside the indexed first-party file set and
-  could not be emitted as one proven runtime-standard-library symbol; and
+  could not be emitted as one proven runtime symbol; and
 - **skipped**: a target existed but could not be serialized safely, such as a
   document-local symbol referenced from another file.
 
@@ -100,7 +102,7 @@ better.
 
 Known conservative omissions include:
 
-- installed third-party and typing-only external links;
+- typing-only external links and distribution name/version ownership;
 - receiver attributes in class/static/property methods or decorators that
   replace the function, where a `self`/`cls` assumption would be false;
 - genuinely dynamic attributes and imports;
@@ -109,7 +111,8 @@ Known conservative omissions include:
 - method-override, type-definition, external-base, and dynamic-base
   relationships;
 - rendered/normalized docs, inferred and property-specific signatures,
-  parameter docs, stub-to-source doc fallback, diagnostics, and call hierarchy;
+  parameter docs, stub-to-source doc fallback, and diagnostics. Call hierarchy
+  requires the optional synchronized ty-facts sidecar;
   and
 - exact `scip-python` symbol compatibility.
 

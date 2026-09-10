@@ -551,7 +551,7 @@ pub(crate) fn index(
                     let symbols = targets
                         .iter()
                         .map(|(file, range)| {
-                            stdlib_symbol(&db, *file, *range, &mut external_symbols)
+                            external_symbol(&db, *file, *range, &mut external_symbols)
                         })
                         .collect::<Option<Vec<_>>>();
                     if let Some(symbols) = symbols
@@ -591,7 +591,7 @@ pub(crate) fn index(
                             target_range: *target_range,
                         });
                     } else if let Some(symbol) =
-                        stdlib_symbol(&db, *target_file, *target_range, &mut external_symbols)
+                        external_symbol(&db, *target_file, *target_range, &mut external_symbols)
                     {
                         external_references[source_index].push((range, symbol));
                     } else {
@@ -672,7 +672,7 @@ fn is_symbol_token(token: ty_ide::SemanticTokenType) -> bool {
     )
 }
 
-fn stdlib_symbol(
+fn external_symbol(
     db: &ProjectDatabase,
     target_file: File,
     target_range: TextRange,
@@ -680,13 +680,26 @@ fn stdlib_symbol(
 ) -> Option<SymbolData> {
     let program_file = db.program_file(target_file);
     let module = file_to_module(db, program_file.resolver_file(db))?;
-    if !module.search_path(db)?.is_standard_library() || module.is_type_check_only(db) {
+    let search_path = module.search_path(db)?;
+    if module.is_type_check_only(db) {
         return None;
     }
     if let Entry::Vacant(entry) = cache.entry(target_file) {
-        let package = PackageIdentity {
-            name: "python-stdlib".into(),
-            version: module.python_version(db).to_string(),
+        let package = if search_path.is_standard_library() {
+            PackageIdentity {
+                name: "python-stdlib".into(),
+                version: module.python_version(db).to_string(),
+            }
+        } else if search_path.is_site_packages() || search_path.is_editable() {
+            PackageIdentity {
+                // ty does not expose installed distribution metadata here. The
+                // import root is nevertheless stable semantic ownership and is
+                // enough for offline definition/reference/call navigation.
+                name: module.name(db).first_component().to_owned(),
+                version: String::new(),
+            }
+        } else {
+            return None;
         };
         let module_descriptors = module
             .name(db)

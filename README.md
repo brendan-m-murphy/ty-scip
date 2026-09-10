@@ -107,11 +107,11 @@ supported command mapping and deliberately unsupported options.
 ## Repository tools
 
 The experimental [SCIP query tool](tools/scip-query/README.md) is a minimal
-offline counterpart to Python LSP navigation. It reads the protobuf directly
-and exposes symbol search, positions, definitions, hover metadata, references,
-members, type hierarchy, and producer-backed callers/callees as deterministic
-JSON. It is designed to follow an `rg` hit without converting the index through
-a lossy database schema.
+static counterpart to ty's Python LSP navigation. It reads the protobuf
+directly and exposes symbol search, positions, definitions, hover metadata,
+references, members, type hierarchy, and producer-backed callers/callees as
+compact deterministic JSON. It is designed to follow an `rg` hit without
+converting the index through a lossy database schema.
 
 The frozen [SCIP-to-Graphify spike](tools/scip-graphify/README.md) remains only
 as compatibility evidence. It reads standard SCIP, does not depend on ty or
