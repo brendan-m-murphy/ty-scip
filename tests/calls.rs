@@ -24,6 +24,8 @@ fn emits_only_resolved_references_in_callee_position() {
             "    leaf()\n",
             "    worker.run()\n",
             "    saved = worker.run\n",
+            "    callback = leaf\n",
+            "    callback()\n",
             "    return saved\n",
         ),
     )

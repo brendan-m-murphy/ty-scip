@@ -393,6 +393,9 @@ fn ty_facts(
         if edge.source_file != edge.target_file && target_symbol.is_local() {
             continue;
         }
+        if !is_callable_target(target_symbol.kind) {
+            continue;
+        }
         push_callee_fact(
             &mut facts,
             source,
@@ -403,6 +406,9 @@ fn ty_facts(
     }
     for (file_index, file) in data.iter().enumerate() {
         for (range, target) in &file.external_references {
+            if !is_callable_target(target.kind) {
+                continue;
+            }
             push_callee_fact(
                 &mut facts,
                 file,
@@ -420,6 +426,16 @@ fn ty_facts(
         index_sha256: format!("{:x}", Sha256::digest(index_bytes)),
         facts,
     }
+}
+
+fn is_callable_target(kind: DefinitionKind) -> bool {
+    matches!(
+        kind,
+        DefinitionKind::Class
+            | DefinitionKind::Method
+            | DefinitionKind::Function
+            | DefinitionKind::Constructor
+    )
 }
 
 fn push_callee_fact(
