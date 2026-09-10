@@ -123,3 +123,14 @@ The next downstream experiments, in order, are:
 Do not add embeddings or a natural-language query layer until these bounded,
 deterministic queries prove insufficient. The model can translate a question
 into explicit commands while the tool returns inspectable evidence.
+
+### Initial file-grouped result
+
+On OpenGHG, grouping `BaseStore.assign_data` test evidence reduced 52
+occurrence/role rows (about 18 KB) to 17 file summaries (about 6.5 KB) without
+losing the depth-3 path to `tests/store/test_datasource.py`. In one frozen
+semantic agent replicate it reduced specialized SCIP invocations from 20 to 8,
+but final quality remained 17/18 because the agent still did not select that
+contract test for inspection. Keep grouping as output hygiene; do not treat it
+as a substitute for following the architectural stages interactively and
+querying their tests directly.
