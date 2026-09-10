@@ -89,7 +89,8 @@ selectors include bounded suggestions.
   SCIP implementation/type-definition subtypes; method projections include the
   owning class. Its default path is `tests/`; use `--path` for another test tree.
   Until a synchronized ty callee-position sidecar exists, downstream paths are
-  callable-reference paths rather than claims about runtime calls.
+  callable-reference paths rather than claims about runtime calls. Pass
+  `--depth 0` for the original direct-only projection.
 - `sql-stats` reports cache row counts for parity checks.
 
 SQL queries collapse document-local import bindings onto the global symbol when

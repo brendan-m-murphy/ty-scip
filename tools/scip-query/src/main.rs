@@ -204,7 +204,14 @@ fn parse_command(name: &str, args: &[String], default_limit: usize) -> Result<Co
                 if name == "path" || name == "affected" || name == "sql-tests" =>
             {
                 let option = args[position].clone();
-                depth = positive(&value(args, &mut position, &option)?, "depth")?;
+                let value = value(args, &mut position, &option)?;
+                depth = if name == "sql-tests" {
+                    value
+                        .parse::<usize>()
+                        .map_err(|_| "depth must be a non-negative integer".to_owned())?
+                } else {
+                    positive(&value, "depth")?
+                };
             }
             "--incoming" | "--outgoing" | "--both" if name == "refs" || name == "sql-refs" => {
                 if direction_seen {
@@ -889,5 +896,20 @@ mod tests {
                 limit: DEFAULT_LIMIT,
             }
         );
+    }
+
+    #[test]
+    fn parses_direct_only_sql_tests() {
+        let ParseResult::Run(cli) = parse(vec![
+            "sql-tests".into(),
+            "cache.sqlite".into(),
+            "BaseStore".into(),
+            "--depth".into(),
+            "0".into(),
+        ])
+        .expect("parse") else {
+            panic!("expected runnable command");
+        };
+        assert!(matches!(cli.command, Command::SqlTests { depth: 0, .. }));
     }
 }
