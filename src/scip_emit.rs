@@ -366,7 +366,7 @@ pub(crate) fn write_index(
     atomic_write(output, &bytes).map_err(|error| error.to_string())?;
     if let Some(facts_output) = facts_output {
         let facts = ty_facts(data, edges, &line_indices, &bytes);
-        let mut facts = serde_json::to_vec_pretty(&facts).map_err(|error| error.to_string())?;
+        let mut facts = serde_json::to_vec(&facts).map_err(|error| error.to_string())?;
         facts.push(b'\n');
         atomic_write(facts_output, &facts).map_err(|error| error.to_string())?;
     }
