@@ -106,19 +106,17 @@ supported command mapping and deliberately unsupported options.
 
 ## Repository tools
 
-The experimental [lossless SCIP query tool](tools/scip-query/README.md) reads
-the protobuf directly and exposes exact symbol lookup, positions, references,
-members, bounded context, and evidence-backed traversal as deterministic JSON.
-It is designed to follow an `rg` hit without converting the index through a
-lossy database schema. It is the candidate successor to the frozen Graphify
-conversion spike below; the two are not intended to remain maintained in
-parallel.
+The experimental [SCIP query tool](tools/scip-query/README.md) is a minimal
+offline counterpart to Python LSP navigation. It reads the protobuf directly
+and exposes symbol search, positions, definitions, hover metadata, references,
+members, type hierarchy, and producer-backed callers/callees as deterministic
+JSON. It is designed to follow an `rg` hit without converting the index through
+a lossy database schema.
 
-The frozen [SCIP-to-Graphify spike](tools/scip-graphify/README.md) is retained
-temporarily for compatibility evidence. It reads standard SCIP, does not depend
-on ty or Ruff, and is not included in the `ty-scip` Python wheel. It receives no
-new features and should be removed after any needed compact export and unique
-compatibility fixtures move to the query tool.
+The frozen [SCIP-to-Graphify spike](tools/scip-graphify/README.md) remains only
+as compatibility evidence. It reads standard SCIP, does not depend on ty or
+Ruff, and is not included in the `ty-scip` Python wheel. It receives no new
+features; retiring it is a separate cleanup from the offline LSP tool.
 The [spike record](docs/research/scip-graphify-spike.md) documents its evidence
 and possible evidence-preserving query-store follow-up.
 
