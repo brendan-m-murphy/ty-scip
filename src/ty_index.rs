@@ -56,6 +56,18 @@ struct IdentifierRanges {
 }
 
 #[derive(Default)]
+struct CalleeRanges(Vec<TextRange>);
+
+impl<'ast> SourceOrderVisitor<'ast> for CalleeRanges {
+    fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
+        if let AnyNodeRef::ExprCall(call) = node {
+            self.0.push(call.func.range());
+        }
+        TraversalSignal::Traverse
+    }
+}
+
+#[derive(Default)]
 struct OccurrenceRoles(HashMap<TextRange, i32>);
 
 impl OccurrenceRoles {
@@ -372,6 +384,12 @@ pub(crate) fn index(
             roles.visit_body(module.suite());
             roles.0
         };
+        let callee_ranges = {
+            let module = parsed_module(&db, program_file.python_file(&db)).load(&db);
+            let mut ranges = CalleeRanges::default();
+            ranges.visit_body(module.suite());
+            ranges.0
+        };
         let (locals, semantic_bindings, canonical_definition_ranges) =
             allocate_semantic_symbols(&db, program_file, &source, &mut globals);
         data.push(FileData {
@@ -382,6 +400,7 @@ pub(crate) fn index(
             semantic_bindings,
             canonical_definition_ranges,
             occurrence_roles,
+            callee_ranges,
             relationships: Vec::new(),
             external_references: Vec::new(),
         });

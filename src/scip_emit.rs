@@ -18,6 +18,8 @@ use scip::{
         SymbolInformation, SymbolRole, TextEncoding, ToolInfo, descriptor, symbol_information,
     },
 };
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use url::Url;
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -85,8 +87,26 @@ pub(crate) struct FileData {
     pub(crate) semantic_bindings: HashMap<TextRange, Vec<usize>>,
     pub(crate) canonical_definition_ranges: HashMap<TextRange, TextRange>,
     pub(crate) occurrence_roles: HashMap<TextRange, i32>,
+    pub(crate) callee_ranges: Vec<TextRange>,
     pub(crate) relationships: Vec<RelationshipEdge>,
     pub(crate) external_references: Vec<(TextRange, SymbolData)>,
+}
+
+#[derive(Serialize)]
+struct TyFacts {
+    format: &'static str,
+    version: u32,
+    index_sha256: String,
+    facts: Vec<CalleePosition>,
+}
+
+#[derive(Eq, Ord, PartialEq, PartialOrd, Serialize)]
+struct CalleePosition {
+    kind: &'static str,
+    document: String,
+    range: Vec<i32>,
+    enclosing_symbol: String,
+    symbol: String,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -208,6 +228,7 @@ pub(crate) fn local_symbol(
 pub(crate) fn write_index(
     root: &Path,
     output: &Path,
+    facts_output: Option<&Path>,
     data: &[FileData],
     edges: &[Edge],
 ) -> Result<(), String> {
@@ -342,7 +363,105 @@ pub(crate) fn write_index(
         ..Default::default()
     };
     let bytes = index.write_to_bytes().map_err(|error| error.to_string())?;
-    atomic_write(output, &bytes).map_err(|error| error.to_string())
+    atomic_write(output, &bytes).map_err(|error| error.to_string())?;
+    if let Some(facts_output) = facts_output {
+        let facts = ty_facts(data, edges, &line_indices, &bytes);
+        let mut facts = serde_json::to_vec_pretty(&facts).map_err(|error| error.to_string())?;
+        facts.push(b'\n');
+        atomic_write(facts_output, &facts).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn ty_facts(
+    data: &[FileData],
+    edges: &[Edge],
+    line_indices: &[LineIndex],
+    index_bytes: &[u8],
+) -> TyFacts {
+    let mut facts = Vec::new();
+    for edge in edges {
+        let source = &data[edge.source_file];
+        let target = &data[edge.target_file];
+        let Some(target_symbol) = target
+            .globals
+            .get(&edge.target_range)
+            .or_else(|| target.locals.get(&edge.target_range))
+        else {
+            continue;
+        };
+        if edge.source_file != edge.target_file && target_symbol.is_local() {
+            continue;
+        }
+        push_callee_fact(
+            &mut facts,
+            source,
+            &line_indices[edge.source_file],
+            edge.source_range,
+            &target_symbol.symbol,
+        );
+    }
+    for (file_index, file) in data.iter().enumerate() {
+        for (range, target) in &file.external_references {
+            push_callee_fact(
+                &mut facts,
+                file,
+                &line_indices[file_index],
+                *range,
+                &target.symbol,
+            );
+        }
+    }
+    facts.sort();
+    facts.dedup();
+    TyFacts {
+        format: "ty-scip-facts",
+        version: 1,
+        index_sha256: format!("{:x}", Sha256::digest(index_bytes)),
+        facts,
+    }
+}
+
+fn push_callee_fact(
+    facts: &mut Vec<CalleePosition>,
+    file: &FileData,
+    line_index: &LineIndex,
+    range: TextRange,
+    target_symbol: &str,
+) {
+    if !file
+        .callee_ranges
+        .iter()
+        .any(|callee| callee.contains_range(range))
+    {
+        return;
+    }
+    let Some(owner) = enclosing_callable(file, range) else {
+        return;
+    };
+    facts.push(CalleePosition {
+        kind: "callee_position",
+        document: file.relative_path.clone(),
+        range: occurrence(&file.source, line_index, range, String::new(), 0).range,
+        enclosing_symbol: owner.symbol.clone(),
+        symbol: target_symbol.to_owned(),
+    });
+}
+
+fn enclosing_callable(file: &FileData, range: TextRange) -> Option<&SymbolData> {
+    file.globals
+        .values()
+        .chain(file.locals.values())
+        .filter(|symbol| {
+            matches!(
+                symbol.kind,
+                DefinitionKind::Module
+                    | DefinitionKind::Method
+                    | DefinitionKind::Function
+                    | DefinitionKind::Constructor
+            ) && symbol.full_range.contains_range(range)
+        })
+        .min_by_key(|symbol| symbol.full_range.len())
 }
 
 fn atomic_write(output: &Path, bytes: &[u8]) -> io::Result<()> {

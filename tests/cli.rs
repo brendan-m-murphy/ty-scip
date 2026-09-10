@@ -32,6 +32,7 @@ fn supports_public_command_line_conventions() {
             "\n",
             "Options:\n",
             "  --output PATH              Write the index to PATH\n",
+            "  --facts PATH               Write synchronized ty-specific facts to PATH\n",
             "  --cwd PATH                 Resolve relative paths from PATH\n",
             "  --quiet                    Suppress indexing diagnostics\n",
             "  --project-name NAME        Override the SCIP package name\n",
@@ -98,6 +99,18 @@ fn supports_public_command_line_conventions() {
     assert_eq!(
         String::from_utf8_lossy(&missing_value.stderr).trim(),
         "ty-scip: --project-name requires a value"
+    );
+
+    let same_output = Command::new(binary)
+        .arg(&target)
+        .args(["--output", "same", "--facts", "same"])
+        .current_dir(&caller)
+        .output()
+        .expect("reject overlapping outputs");
+    assert!(!same_output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&same_output.stderr).trim(),
+        "ty-scip: --facts must not overwrite the SCIP index"
     );
 
     let missing_project = caller.join("missing-project");

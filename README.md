@@ -51,12 +51,21 @@ With no arguments, `ty-scip` indexes the current directory and writes
 `index.scip` there. If only `PROJECT_PATH` is supplied, the output is still
 written as `index.scip` in the caller's current directory.
 
+Pass `--facts index.tyfacts` to also write ty-specific semantic observations
+that standard SCIP cannot represent. The optional JSON sidecar contains the
+SHA-256 fingerprint of the exact SCIP index it accompanies. Its initial fact
+kind is `callee_position`: a resolved reference that Ruff's syntax tree places
+in the callee of a Python call, together with its enclosing symbol.
+
 ```console
 # Current project -> ./index.scip
 ty-scip
 
 # scip-python-style command -> ./index.scip
 ty-scip index . --output index.scip
+
+# Add synchronized resolved-callee observations
+ty-scip index . --output index.scip --facts index.tyfacts
 
 # Another project discovery path -> explicit output
 ty-scip ../project ./project.scip
@@ -69,6 +78,7 @@ Options:
 
 - `--output PATH`: write the index to `PATH`; cannot be combined with the
   positional output path.
+- `--facts PATH`: write an optional fingerprinted ty-facts sidecar to `PATH`.
 - `--cwd PATH`: resolve relative project and output paths from `PATH`.
 - `--quiet`: suppress successful-run diagnostics; errors still go to stderr.
 - `--project-name NAME`: override the SCIP package name.

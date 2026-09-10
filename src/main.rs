@@ -8,7 +8,7 @@ use std::{
 mod scip_emit;
 mod ty_index;
 
-const USAGE: &str = "Usage: ty-scip [index] [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]\n\nIndexes a Python project into index.scip by default.\n\nOptions:\n  --output PATH              Write the index to PATH\n  --cwd PATH                 Resolve relative paths from PATH\n  --quiet                    Suppress indexing diagnostics\n  --project-name NAME        Override the SCIP package name\n  --project-version VERSION  Override the SCIP package version\n  -h, --help                 Print help\n  -V, --version              Print version";
+const USAGE: &str = "Usage: ty-scip [index] [OPTIONS] [PROJECT_PATH] [OUTPUT.scip]\n\nIndexes a Python project into index.scip by default.\n\nOptions:\n  --output PATH              Write the index to PATH\n  --facts PATH               Write synchronized ty-specific facts to PATH\n  --cwd PATH                 Resolve relative paths from PATH\n  --quiet                    Suppress indexing diagnostics\n  --project-name NAME        Override the SCIP package name\n  --project-version VERSION  Override the SCIP package version\n  -h, --help                 Print help\n  -V, --version              Print version";
 
 fn main() {
     if let Err(error) = run() {
@@ -31,6 +31,7 @@ fn run() -> Result<(), String> {
     let mut project_name = None;
     let mut project_version = None;
     let mut output_option = None;
+    let mut facts_option = None;
     let mut cwd = None;
     let mut quiet = false;
     let mut options = true;
@@ -52,6 +53,10 @@ fn run() -> Result<(), String> {
                 }
                 Some("--output") => {
                     output_option = Some(path_option_value("--output", arguments.next())?);
+                    continue;
+                }
+                Some("--facts") => {
+                    facts_option = Some(path_option_value("--facts", arguments.next())?);
                     continue;
                 }
                 Some("--cwd") => {
@@ -80,6 +85,10 @@ fn run() -> Result<(), String> {
                 }
                 Some(value) if value.starts_with("--output=") => {
                     output_option = Some(PathBuf::from(&value["--output=".len()..]));
+                    continue;
+                }
+                Some(value) if value.starts_with("--facts=") => {
+                    facts_option = Some(PathBuf::from(&value["--facts=".len()..]));
                     continue;
                 }
                 Some(value) if value.starts_with("--cwd=") => {
@@ -146,6 +155,16 @@ fn run() -> Result<(), String> {
                 }
             },
         );
+    let facts_output = facts_option.map(|path| {
+        if path.is_absolute() {
+            path
+        } else {
+            working_directory.join(path)
+        }
+    });
+    if facts_output.as_ref() == Some(&output) {
+        return Err("--facts must not overwrite the SCIP index".to_owned());
+    }
 
     let index = ty_index::index(root, sample_limit, project_name, project_version)?;
     if !quiet {
@@ -186,8 +205,14 @@ fn run() -> Result<(), String> {
         .iter()
         .map(|file| file.globals.len() + file.locals.len())
         .sum::<usize>();
-    scip_emit::write_index(&index.root, &output, &index.files, &index.edges)
-        .map_err(|error| format!("cannot write SCIP index {}: {error}", output.display()))?;
+    scip_emit::write_index(
+        &index.root,
+        &output,
+        facts_output.as_deref(),
+        &index.files,
+        &index.edges,
+    )
+    .map_err(|error| format!("cannot write SCIP index {}: {error}", output.display()))?;
     if !quiet {
         eprintln!(
             "indexed {} files: {definitions} definitions, {references} references; \
