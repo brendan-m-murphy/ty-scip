@@ -521,20 +521,22 @@ impl QueryIndex {
     /// Discovery optionally restricted to symbols evidenced in `document`.
     pub fn find_in(&self, query: &str, document: Option<&str>, limit: usize) -> Page<SymbolView> {
         let needle = query.to_lowercase();
+        let qualified_query = query.contains(['.', '/', '#', ':']);
         let mut matches: Vec<_> = self
             .symbols
             .iter()
             .filter(|(id, data)| {
                 document.is_none_or(|path| symbol_has_document(self, id, path))
-                    && (id.symbol.to_lowercase().contains(&needle)
-                        || data
-                            .display_names
-                            .iter()
-                            .any(|name| name.to_lowercase().contains(&needle))
-                        || data
-                            .qualified_names
-                            .iter()
-                            .any(|name| name.to_lowercase().contains(&needle)))
+                    && !self.is_import_binding(id)
+                    && (data.display_names.iter().any(|name| {
+                        let name = name.to_lowercase();
+                        name.contains(&needle) || is_subsequence(&needle, &name)
+                    }) || qualified_query
+                        && (id.symbol.to_lowercase().contains(&needle)
+                            || data
+                                .qualified_names
+                                .iter()
+                                .any(|name| name.to_lowercase().contains(&needle))))
             })
             .map(|(id, _)| self.symbol_view(id))
             .collect();
@@ -566,21 +568,33 @@ impl QueryIndex {
                 document.is_none_or(|path| {
                     id.document.as_deref().is_none_or(|local| local == path)
                         && symbol_has_document(self, id, path)
-                }) && (id.symbol == query
-                    || id.canonical() == query
-                    || data.display_names.contains(query)
-                    || data.qualified_names.iter().any(|name| {
-                        name == query
-                            || name
-                                .strip_suffix(query)
-                                .is_some_and(|prefix| prefix.ends_with('.'))
-                    }))
+                }) && (document.is_some() || !self.is_import_binding(id))
+                    && (id.symbol == query
+                        || id.canonical() == query
+                        || data.display_names.contains(query)
+                        || data.qualified_names.iter().any(|name| {
+                            name == query
+                                || name
+                                    .strip_suffix(query)
+                                    .is_some_and(|prefix| prefix.ends_with('.'))
+                        }))
             })
             .map(|(id, _)| self.symbol_view(id))
             .collect();
         candidates.sort();
         candidates.dedup();
         resolution(query, candidates, limit)
+    }
+
+    fn is_import_binding(&self, id: &SymbolId) -> bool {
+        let Some(data) = self.symbols.get(id) else {
+            return false;
+        };
+        !data.definitions.is_empty()
+            && data
+                .definitions
+                .iter()
+                .all(|index| self.occurrences[*index].symbol_roles & SymbolRole::Import as i32 != 0)
     }
 
     /// Return every occurrence whose preferred SCIP range contains a 1-based
@@ -718,6 +732,37 @@ impl QueryIndex {
             snippets: Page::new(snippets, limit),
             snippet_failures: Page::new(snippet_failures, limit),
         })
+    }
+
+    /// Definition locations for an LSP-style definition response.
+    pub fn definitions(&self, id: &SymbolId, limit: usize) -> Page<OccurrenceView> {
+        let items = self
+            .symbols
+            .get(id)
+            .map(|data| {
+                data.definitions
+                    .iter()
+                    .map(|index| self.occurrences[*index].clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Page::new(items, limit)
+    }
+
+    /// Documentation retained for an LSP-style hover response.
+    pub fn documentation(&self, id: &SymbolId) -> Vec<String> {
+        self.symbols
+            .get(id)
+            .map(|data| data.documentation.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Signatures retained for an LSP-style hover or definition response.
+    pub fn signatures(&self, id: &SymbolId) -> Vec<SignatureView> {
+        self.symbols
+            .get(id)
+            .map(|data| data.signatures.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Semantic reference evidence. Plain occurrences are deliberately never
@@ -1443,6 +1488,17 @@ fn find_rank(symbol: &SymbolView, needle: &str) -> (u8, String, SymbolId) {
         4
     };
     (rank, display, symbol.id.clone())
+}
+
+fn is_subsequence(needle: &str, haystack: &str) -> bool {
+    let mut needle = needle.chars();
+    let mut wanted = needle.next();
+    for character in haystack.chars() {
+        if wanted == Some(character) {
+            wanted = needle.next();
+        }
+    }
+    wanted.is_none()
 }
 
 fn resolution(query: &str, mut candidates: Vec<SymbolView>, limit: usize) -> Resolution {

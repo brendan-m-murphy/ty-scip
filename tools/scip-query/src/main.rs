@@ -1,8 +1,8 @@
-use std::{env, path::PathBuf, process::ExitCode};
+use std::{collections::BTreeMap, env, path::PathBuf, process::ExitCode};
 
 use scip_query::{
-    Page, QueryIndex, RefDirection, ReferenceEvidence, ReferenceView, Resolution, SymbolId,
-    SymbolView,
+    CallView, OccurrenceView, Page, QueryIndex, RefDirection, ReferenceEvidence, ReferenceView,
+    Resolution, SourceRange, SymbolId, SymbolView,
 };
 use serde_json::{Value, json};
 
@@ -170,20 +170,24 @@ fn execute(cli: Cli) -> Result<u8, String> {
             "command": "find",
             "path": cli.path,
             "query": cli.argument,
-            "result": result,
+            "result": map_page(result, |symbol| symbol_projection(&index, &symbol)),
             "status": "ok",
         }))?;
         return Ok(0);
     }
     if cli.command == "at" {
         let (path, line, column) = parse_location(&cli.argument)?;
-        let result = index
+        let mut result = index
             .at(&path, line, column, cli.limit)
             .map_err(|error| error.to_string())?;
+        result.items = without_shadowed_import_bindings(result.items);
+        result.returned = result.items.len();
+        result.total = result.returned;
+        result.truncated = false;
         emit(&json!({
             "command": "at",
             "location": {"path": path, "line": line, "column": column},
-            "result": result,
+            "result": map_page(result, |occurrence| occurrence_projection(&index, occurrence)),
             "status": "ok",
         }))?;
         return Ok(0);
@@ -191,33 +195,35 @@ fn execute(cli: Cli) -> Result<u8, String> {
 
     let symbol = match select(&index, &cli.argument, cli.limit) {
         Ok(symbol) => symbol,
-        Err(failure) => return emit_selection_failure(&cli.command, &cli.argument, failure),
+        Err(failure) => {
+            return emit_selection_failure(&index, &cli.command, &cli.argument, failure);
+        }
     };
     let result = match cli.command.as_str() {
-        "definition" => {
-            let context = index
-                .context_with_limit(&symbol.id, 0, 0, cli.limit)
-                .map_err(|error| error.to_string())?;
-            json!({
-                "definitions": context.definitions,
-                "snippets": context.snippets,
-                "snippet_failures": context.snippet_failures,
-            })
-        }
+        "definition" => json!(map_page(
+            index.definitions(&symbol.id, cli.limit),
+            |definition| definition_projection(&index, &symbol, &definition)
+        )),
         "hover" => {
-            let context = index
-                .context_with_limit(&symbol.id, 0, 0, cli.limit)
-                .map_err(|error| error.to_string())?;
             json!({
-                "documentation": context.documentation,
-                "signatures": context.signatures,
-                "symbol": context.symbol,
+                "documentation": index.documentation(&symbol.id),
+                "signatures": index.signatures(&symbol.id).into_iter().map(|item| item.text).collect::<Vec<_>>(),
+                "symbol": symbol_projection(&index, &symbol),
             })
         }
         "references" => {
             let mut items = index
                 .refs(&symbol.id, RefDirection::Incoming, usize::MAX)
-                .items;
+                .items
+                .into_iter()
+                .filter(|reference| {
+                    matches!(
+                        &reference.evidence,
+                        ReferenceEvidence::Occurrence { occurrence }
+                            if !occurrence.role_names.contains(&"import")
+                    )
+                })
+                .collect::<Vec<_>>();
             if let Some(prefix) = cli.path.as_deref() {
                 items.retain(|reference| {
                     reference_document(reference)
@@ -229,7 +235,7 @@ fn execute(cli: Cli) -> Result<u8, String> {
                 .iter()
                 .skip(cli.offset)
                 .take(cli.limit)
-                .map(|reference| compact_reference(&index, reference))
+                .map(|reference| reference_projection(&index, reference))
                 .collect::<Vec<_>>();
             let returned = items.len();
             let next_offset = (cli.offset + returned < total).then_some(cli.offset + returned);
@@ -242,24 +248,40 @@ fn execute(cli: Cli) -> Result<u8, String> {
                 "truncated": next_offset.is_some(),
             })
         }
-        "members" => json!(index.members(&symbol.id, cli.limit)),
-        "callers" => json!(
+        "members" => json!(map_page(index.members(&symbol.id, cli.limit), |member| {
+            definition_projection(&index, &member.symbol, &member.definition)
+        })),
+        "callers" => calls_projection(
+            &index,
             index
-                .callers(&symbol.id, cli.limit)
+                .callers(&symbol.id, usize::MAX)
                 .map_err(|error| error.to_string())?
+                .items,
+            cli.limit,
+            true,
         ),
-        "callees" => json!(
+        "callees" => calls_projection(
+            &index,
             index
-                .callees(&symbol.id, cli.limit)
+                .callees(&symbol.id, usize::MAX)
                 .map_err(|error| error.to_string())?
+                .items,
+            cli.limit,
+            false,
         ),
-        "supertypes" => json!(index.supertypes(&symbol.id, cli.limit)),
-        "subtypes" => json!(index.subtypes(&symbol.id, cli.limit)),
+        "supertypes" => json!(map_page(
+            index.supertypes(&symbol.id, cli.limit),
+            |relationship| symbol_projection_from_id(&index, &relationship.target)
+        )),
+        "subtypes" => json!(map_page(
+            index.subtypes(&symbol.id, cli.limit),
+            |relationship| symbol_projection_from_id(&index, &relationship.source)
+        )),
         _ => unreachable!(),
     };
     emit(&json!({
         "command": cli.command,
-        "resolved": symbol.id,
+        "resolved": symbol.qualified_name,
         "result": result,
         "selector": cli.argument,
         "status": "ok",
@@ -324,13 +346,14 @@ fn select(
 }
 
 fn emit_selection_failure(
+    index: &QueryIndex,
     command: &str,
     selector: &str,
     failure: SelectionFailure,
 ) -> Result<u8, String> {
     match failure {
         SelectionFailure::Ambiguous(candidates) => emit(&json!({
-            "candidates": candidates,
+            "candidates": map_page(candidates, |symbol| symbol_projection(index, &symbol)),
             "command": command,
             "selector": selector,
             "status": "ambiguous",
@@ -339,7 +362,7 @@ fn emit_selection_failure(
             "command": command,
             "selector": selector,
             "status": "not_found",
-            "suggestions": suggestions,
+            "suggestions": map_page(suggestions, |symbol| symbol_projection(index, &symbol)),
         }))?,
     }
     Ok(2)
@@ -352,26 +375,146 @@ fn reference_document(reference: &ReferenceView) -> Option<&str> {
     }
 }
 
-fn compact_reference(index: &QueryIndex, reference: &ReferenceView) -> Value {
-    let evidence = match &reference.evidence {
-        ReferenceEvidence::Occurrence { occurrence } => json!({
-            "column": occurrence.range.map(|range| range.start.character + 1),
-            "document": occurrence.document,
-            "line": occurrence.range.map(|range| range.start.line + 1),
-            "roles": occurrence.role_names,
-        }),
-        ReferenceEvidence::Relationship { relationship } => json!({
-            "document": relationship.document,
-            "is_definition": relationship.is_definition,
-            "is_implementation": relationship.is_implementation,
-            "is_reference": relationship.is_reference,
-            "is_type_definition": relationship.is_type_definition,
-        }),
+fn reference_projection(index: &QueryIndex, reference: &ReferenceView) -> Value {
+    let ReferenceEvidence::Occurrence { occurrence } = &reference.evidence else {
+        unreachable!("reference projection filters relationship evidence")
     };
     json!({
-        "evidence": evidence,
-        "source": symbol_label(index, &reference.source),
-        "source_id": reference.source,
+        "location": occurrence.range.map(|range| location(&occurrence.document, range)),
+        "owner": symbol_label(index, &reference.source),
+        "roles": occurrence.role_names,
+    })
+}
+
+fn map_page<T>(page: Page<T>, mut project: impl FnMut(T) -> Value) -> Value {
+    json!({
+        "items": page.items.into_iter().map(&mut project).collect::<Vec<_>>(),
+        "returned": page.returned,
+        "total": page.total,
+        "truncated": page.truncated,
+    })
+}
+
+fn symbol_projection(index: &QueryIndex, symbol: &SymbolView) -> Value {
+    let location = index
+        .definitions(&symbol.id, 1)
+        .items
+        .into_iter()
+        .next()
+        .and_then(|item| item.range.map(|range| location(&item.document, range)));
+    json!({
+        "location": location,
+        "name": symbol.display_name,
+        "qualified_name": symbol.qualified_name,
+        "selector": symbol.qualified_name,
+    })
+}
+
+fn symbol_projection_from_id(index: &QueryIndex, id: &SymbolId) -> Value {
+    match index.resolve(&id.canonical(), None, 1) {
+        Resolution::Found { symbol } => symbol_projection(index, &symbol),
+        _ => json!({"selector": id.canonical()}),
+    }
+}
+
+fn definition_projection(
+    index: &QueryIndex,
+    symbol: &SymbolView,
+    definition: &OccurrenceView,
+) -> Value {
+    let signature = index
+        .signatures(&symbol.id)
+        .into_iter()
+        .next()
+        .map(|item| item.text);
+    json!({
+        "location": definition.range.map(|range| location(&definition.document, range)),
+        "name": symbol.display_name,
+        "qualified_name": symbol.qualified_name,
+        "selector": symbol.qualified_name,
+        "signature": signature,
+    })
+}
+
+fn occurrence_projection(index: &QueryIndex, occurrence: OccurrenceView) -> Value {
+    json!({
+        "location": occurrence.range.map(|range| location(&occurrence.document, range)),
+        "roles": occurrence.role_names,
+        "symbol": occurrence.symbol.map(|symbol| symbol_projection_from_id(index, &symbol)),
+    })
+}
+
+fn without_shadowed_import_bindings(items: Vec<OccurrenceView>) -> Vec<OccurrenceView> {
+    items
+        .iter()
+        .filter(|item| {
+            let local_import_definition = item.is_definition()
+                && item.role_names.contains(&"import")
+                && item
+                    .symbol
+                    .as_ref()
+                    .is_some_and(|symbol| symbol.document.is_some());
+            !local_import_definition
+                || !items.iter().any(|other| {
+                    !other.is_definition()
+                        && other.role_names.contains(&"import")
+                        && other.document == item.document
+                        && other.range == item.range
+                })
+        })
+        .cloned()
+        .collect()
+}
+
+fn calls_projection(
+    index: &QueryIndex,
+    calls: Vec<CallView>,
+    limit: usize,
+    incoming: bool,
+) -> Value {
+    let mut groups = BTreeMap::<SymbolId, Vec<(String, SourceRange)>>::new();
+    for call in calls {
+        let symbol = if incoming { call.caller } else { call.callee };
+        groups
+            .entry(symbol)
+            .or_default()
+            .push((call.document, call.range));
+    }
+    let total = groups.len();
+    let items = groups
+        .into_iter()
+        .take(limit)
+        .map(|(symbol, mut ranges)| {
+            ranges.sort();
+            ranges.dedup();
+            let symbol = symbol_projection_from_id(index, &symbol);
+            let from_ranges = ranges
+                .into_iter()
+                .map(|(path, range)| location(&path, range))
+                .collect::<Vec<_>>();
+            if incoming {
+                json!({"from": symbol, "from_ranges": from_ranges})
+            } else {
+                json!({"to": symbol, "from_ranges": from_ranges})
+            }
+        })
+        .collect::<Vec<_>>();
+    let returned = items.len();
+    json!({
+        "items": items,
+        "returned": returned,
+        "total": total,
+        "truncated": total > returned,
+    })
+}
+
+fn location(path: &str, range: SourceRange) -> Value {
+    json!({
+        "column": range.start.character + 1,
+        "end_column": range.end.character + 1,
+        "end_line": range.end.line + 1,
+        "line": range.start.line + 1,
+        "path": path,
     })
 }
 
@@ -383,8 +526,7 @@ fn symbol_label(index: &QueryIndex, id: &SymbolId) -> String {
 }
 
 fn emit(value: &impl serde::Serialize) -> Result<(), String> {
-    serde_json::to_writer_pretty(std::io::stdout().lock(), value)
-        .map_err(|error| error.to_string())?;
+    serde_json::to_writer(std::io::stdout().lock(), value).map_err(|error| error.to_string())?;
     println!();
     Ok(())
 }

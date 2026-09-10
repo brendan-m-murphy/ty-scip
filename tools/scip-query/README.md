@@ -1,8 +1,8 @@
 # scip-query
 
-`scip-query` is a small offline counterpart to Python LSP navigation. It reads
-a SCIP index directly and offers bounded, deterministic JSON queries for the
-operations a coding agent normally needs after orienting with `rg`.
+`scip-query` is a small static counterpart to ty's Python LSP navigation. It
+reads a SCIP index directly and offers bounded, deterministic JSON projections
+of the operations a coding agent normally needs after orienting with `rg`.
 
 It does not provide natural-language graph queries, architecture inference,
 test ranking, transitive impact analysis, a SQLite cache, or an MCP server.
@@ -42,9 +42,12 @@ scip-query --index INDEX.scip [--limit N] subtypes SELECTOR
 Locations are one-based and columns use UTF-8 byte offsets, matching
 `rg --column`. Selectors may be raw SCIP symbols, qualified names, bare names,
 or `path.py:Qualified.name`. Ambiguity is returned as structured JSON rather
-than resolved arbitrarily. `references` reports incoming SCIP reference
-evidence; `callers` and `callees` report only references that ty resolved and
-Ruff placed in a call's callee position.
+than resolved arbitrarily. Workspace discovery and bare-name selection ignore
+import-local bindings and return their canonical targets. `references` omits
+imports, matching editor reference navigation. `callers` and `callees` group
+call sites by symbol and report only references that ty resolved and Ruff
+placed in a call's callee position. Output is compact, one-line JSON; pipe it
+through `jq` when inspecting it manually.
 
 The intended agent loop is deliberately simple:
 
