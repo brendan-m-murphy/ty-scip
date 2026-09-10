@@ -40,7 +40,7 @@ scip-query --index INDEX.scip [--root PATH] [--limit N] path SOURCE TARGET [--ma
 scip-query --index INDEX.scip [--root PATH] [--limit N] affected SELECTOR [--max-depth N]
 scip-query --index INDEX.scip build-db DATABASE
 scip-query sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both] [--path PREFIX] [--offset N] [--limit N]
-scip-query sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N] [--offset N] [--limit N]
+scip-query sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N] [--group-files] [--offset N] [--limit N]
 scip-query sql-stats DATABASE
 ```
 
@@ -90,7 +90,9 @@ selectors include bounded suggestions.
   owning class. Its default path is `tests/`; use `--path` for another test tree.
   Until a synchronized ty callee-position sidecar exists, downstream paths are
   callable-reference paths rather than claims about runtime calls. Pass
-  `--depth 0` for the original direct-only projection.
+  `--depth 0` for the original direct-only projection. Pass `--group-files` to
+  return one ranked summary and evidence path per test file instead of separate
+  occurrence/role rows.
 - `sql-stats` reports cache row counts for parity checks.
 
 SQL queries collapse document-local import bindings onto the global symbol when
@@ -112,7 +114,15 @@ scip-query --index index.scip --root . refs \
 scip-query --index index.scip --root . refs \
   openghg.store.base._base.BaseStore.assign_data --incoming \
   --path tests/ --compact --limit 20
+
+# Summarize direct and downstream test evidence once per file.
+scip-query sql-tests index.sqlite BaseStore.assign_data \
+  --group-files --depth 4 --limit 20
 ```
+
+Prefer the interactive `at`/`context`/`refs` loop for behavioral questions.
+Use grouped `sql-tests` when the desired answer is a bounded change surface;
+use occurrence-level output to audit why a grouped file was selected.
 
 ## Semantic limits
 

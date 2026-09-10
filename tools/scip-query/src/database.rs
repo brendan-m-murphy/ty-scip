@@ -207,6 +207,29 @@ pub struct SqlTestPage {
     pub items: Vec<SqlTestSummary>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SqlTestFileSummary {
+    pub document: String,
+    pub depth: usize,
+    pub path: Vec<String>,
+    pub line: Option<i64>,
+    pub column: Option<i64>,
+    pub representative_target: String,
+    pub representative_match_kind: String,
+    pub matched_symbols: usize,
+    pub occurrences: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SqlTestFilePage {
+    pub total: usize,
+    pub offset: usize,
+    pub returned: usize,
+    pub truncated: bool,
+    pub next_offset: Option<usize>,
+    pub items: Vec<SqlTestFileSummary>,
+}
+
 impl QueryIndex {
     /// Materialize all normalized semantic facts without replacing the SCIP authority.
     pub fn write_database(&self, path: &Path) -> Result<DatabaseStats> {
@@ -625,6 +648,62 @@ impl SqlDatabase {
         Ok((
             resolved,
             SqlTestPage {
+                total,
+                offset,
+                returned,
+                truncated: next_offset.is_some(),
+                next_offset,
+                items,
+            },
+        ))
+    }
+
+    pub fn test_files(
+        &self,
+        selector: &str,
+        path_prefix: &str,
+        max_depth: usize,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(String, SqlTestFilePage)> {
+        let (resolved, rows) = self.tests(selector, path_prefix, max_depth, 0, usize::MAX)?;
+        let mut groups = BTreeMap::<String, Vec<SqlTestSummary>>::new();
+        for row in rows.items {
+            groups.entry(row.document.clone()).or_default().push(row);
+        }
+        let mut items = Vec::new();
+        for (document, mut rows) in groups {
+            rows.sort_by(|left, right| {
+                (left.depth, &left.target, &left.match_kind, left.line).cmp(&(
+                    right.depth,
+                    &right.target,
+                    &right.match_kind,
+                    right.line,
+                ))
+            });
+            let representative = &rows[0];
+            items.push(SqlTestFileSummary {
+                document,
+                depth: representative.depth,
+                path: representative.path.clone(),
+                line: representative.line,
+                column: representative.column,
+                representative_target: representative.target.clone(),
+                representative_match_kind: representative.match_kind.clone(),
+                matched_symbols: rows.len(),
+                occurrences: rows.iter().map(|row| row.occurrences).sum(),
+            });
+        }
+        items.sort_by(|left, right| {
+            (left.depth, &left.document).cmp(&(right.depth, &right.document))
+        });
+        let total = items.len();
+        let items: Vec<_> = items.into_iter().skip(offset).take(limit).collect();
+        let returned = items.len();
+        let next_offset = (offset + returned < total).then_some(offset + returned);
+        Ok((
+            resolved,
+            SqlTestFilePage {
                 total,
                 offset,
                 returned,

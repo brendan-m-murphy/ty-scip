@@ -77,3 +77,49 @@ The downstream tool owns only SCIP-to-graph mapping, serialization, caching,
 and traversal. An optional synchronized producer sidecar is reserved for a
 demonstrated useful observation SCIP cannot express. The first candidate is
 syntactic `CALLEE_POSITION`, not graph policy or a claimed runtime call.
+
+## Product directions after the query benchmark
+
+The benchmark supports three complementary interfaces over the same lossless
+SCIP authority. They should not be collapsed into one large default response.
+
+1. **Interactive, LSP-like navigation.** Agents use `find` or `at`, then make
+   small `context`, `refs`, `members`, and `path` requests as each answer
+   suggests the next symbol. This is the default for understanding behavior.
+   `rg` remains useful for strings, configuration, registrations, and dynamic
+   relationships that static semantics cannot resolve.
+2. **Grouped change-surface projections.** Questions such as “which tests guard
+   this symbol?” benefit from bounded transitive traversal, but results should
+   be grouped by file and ranked by shortest evidence path. Keep direct-only
+   (`--depth 0`) and occurrence-level output available for audit and detail.
+3. **Architecture orientation.** A derived SQLite graph can answer higher-level
+   questions without reducing the underlying protobuf. This is where the useful
+   part of Graphify's promise belongs: identify likely public entry points,
+   delegating wrappers versus implementation-heavy symbols, module layers,
+   shared subsystems, inheritance families, fan-in/fan-out hotspots, and common
+   paths from public APIs to persistence or computation boundaries.
+
+Architecture reports must state how each label was derived. Candidate evidence
+includes exported/re-exported symbols and package facades for public surface;
+resolved callee positions and short forwarding paths for wrapper/work
+distinctions; and normalized module dependencies, ownership, inheritance,
+centrality, and communities for recurring patterns. Naming conventions and
+graph measures are ranking signals, not semantic facts. Dynamic registrations,
+plugin loading, configuration keys, decorators, and string-dispatched APIs need
+source/`rg` evidence alongside SCIP.
+
+The next downstream experiments, in order, are:
+
+1. benchmark file-grouped test projection against occurrence-level output;
+2. document the interactive query loop in the agent skill and measure whether
+   agents use fewer broad reads while retaining accuracy;
+3. add lossless module-level aggregates and an evidence-returning `explain`
+   query for public-surface and wrapper/worker hypotheses;
+4. join synchronized ty callee-position facts when available, and compare the
+   resulting paths with conservative callable-reference traversal; and
+5. evaluate architectural summaries against hand-mapped Python subsystems,
+   including false-positive and dynamic-edge audits.
+
+Do not add embeddings or a natural-language query layer until these bounded,
+deterministic queries prove insufficient. The model can translate a question
+into explicit commands while the tool returns inspectable evidence.

@@ -611,4 +611,24 @@ fn sqlite_resolves_import_aliases_and_projects_tests() {
             .iter()
             .all(|item| item["document"] != "tests/test_leaf.py")
     );
+
+    let grouped = fixture.success(&[
+        "sql-tests",
+        database_text,
+        "pkg.Alpha#run",
+        "--group-files",
+        "--limit",
+        "10",
+    ]);
+    assert_eq!(grouped["group_by"], "file");
+    assert_eq!(grouped["result"]["total"], 2);
+    let leaf = result_items(&grouped)
+        .iter()
+        .find(|item| item["document"] == "tests/test_leaf.py")
+        .unwrap();
+    assert_eq!(leaf["depth"], 2);
+    assert_eq!(
+        leaf["path"],
+        serde_json::json!(["pkg.Alpha.run", "pkg.helper", "pkg.leaf"])
+    );
 }

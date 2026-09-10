@@ -71,6 +71,11 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
    match exactly. Reserve an optional synchronized producer sidecar for a
    demonstrated useful observation SCIP cannot express; the first candidate is
    syntactic `CALLEE_POSITION`, not graph policy or a claimed runtime call.
+7. For architecture consumers, preserve enough producer evidence to distinguish
+   imports, ordinary reads, callable references, proven callee positions,
+   ownership, inheritance, and re-exports. Do not emit downstream labels such
+   as public API, wrapper, worker, layer, hotspot, or community from `ty-scip`;
+   those are evidence-backed interpretations owned by the query tool.
 
 ### 2. SCIP fidelity
 
@@ -95,6 +100,10 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 4. Keep frozen OpenGHG as the scale and `scip-cli` acceptance gate, recording
    release time, index size, definitions, references, omissions, and query
    results at each material milestone.
+5. Evaluate consumers in separate modes: small interactive SCIP requests,
+   grouped change-surface projections, and architecture summaries. Record both
+   whether required evidence was retrieved and whether the agent used it in its
+   final synthesis; do not conflate a consumer ranking miss with an index miss.
 
 ### 4. Public project surface
 

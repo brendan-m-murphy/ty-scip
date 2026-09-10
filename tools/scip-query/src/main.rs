@@ -14,7 +14,7 @@ const USAGE: &str = r#"Usage:
   scip-query [--root PATH] [--limit N] INDEX.scip COMMAND ...
   scip-query sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both]
              [--path PREFIX] [--offset N] [--limit N]
-  scip-query sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N]
+  scip-query sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N] [--group-files]
              [--offset N] [--limit N]
   scip-query sql-stats DATABASE
 
@@ -30,7 +30,8 @@ Commands:
   build-db DATABASE
   sql-refs DATABASE SELECTOR [--incoming|--outgoing|--both] [--path PREFIX]
            [--offset N] [--limit N]
-  sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N] [--offset N] [--limit N]
+  sql-tests DATABASE SELECTOR [--path PREFIX] [--depth N] [--group-files]
+            [--offset N] [--limit N]
   sql-stats DATABASE
 
 Selectors accept raw SCIP symbols and path-qualified names."#;
@@ -101,6 +102,7 @@ enum Command {
         selector: String,
         path: String,
         depth: usize,
+        group_files: bool,
         offset: usize,
         limit: usize,
     },
@@ -186,6 +188,7 @@ fn parse_command(name: &str, args: &[String], default_limit: usize) -> Result<Co
     let mut direction = Direction::Both;
     let mut direction_seen = false;
     let mut compact = false;
+    let mut group_files = false;
     let mut offset = 0;
     let mut position = 0;
     while position < args.len() {
@@ -195,6 +198,7 @@ fn parse_command(name: &str, args: &[String], default_limit: usize) -> Result<Co
                 path = Some(value(args, &mut position, "--path")?)
             }
             "--compact" if name == "refs" => compact = true,
+            "--group-files" if name == "sql-tests" => group_files = true,
             "--offset" if matches!(name, "refs" | "sql-refs" | "sql-tests") => {
                 offset = value(args, &mut position, "--offset")?
                     .parse::<usize>()
@@ -293,6 +297,7 @@ fn parse_command(name: &str, args: &[String], default_limit: usize) -> Result<Co
             selector: selector.clone(),
             path: path.unwrap_or_else(|| "tests/".to_owned()),
             depth,
+            group_files,
             offset,
             limit,
         }),
@@ -386,25 +391,45 @@ fn execute(cli: Cli) -> Result<u8, String> {
         selector,
         path,
         depth,
+        group_files,
         offset,
         limit,
     } = &cli.command
     {
         let sql = SqlDatabase::open(database).map_err(|error| error.to_string())?;
-        let (resolved, result) = match sql.tests(selector, path, *depth, *offset, *limit) {
-            Ok(result) => result,
-            Err(error) => return emit_sql_selection_failure("sql-tests", selector, error),
-        };
-        emit(&json!({
-            "command": "sql-tests",
-            "database": database,
-            "path": path,
-            "max_depth": depth,
-            "resolved": resolved,
-            "result": result,
-            "selector": selector,
-            "status": "ok",
-        }))?;
+        if *group_files {
+            let (resolved, result) = match sql.test_files(selector, path, *depth, *offset, *limit) {
+                Ok(result) => result,
+                Err(error) => return emit_sql_selection_failure("sql-tests", selector, error),
+            };
+            emit(&json!({
+                "command": "sql-tests",
+                "database": database,
+                "group_by": "file",
+                "path": path,
+                "max_depth": depth,
+                "resolved": resolved,
+                "result": result,
+                "selector": selector,
+                "status": "ok",
+            }))?;
+        } else {
+            let (resolved, result) = match sql.tests(selector, path, *depth, *offset, *limit) {
+                Ok(result) => result,
+                Err(error) => return emit_sql_selection_failure("sql-tests", selector, error),
+            };
+            emit(&json!({
+                "command": "sql-tests",
+                "database": database,
+                "group_by": "occurrence",
+                "path": path,
+                "max_depth": depth,
+                "resolved": resolved,
+                "result": result,
+                "selector": selector,
+                "status": "ok",
+            }))?;
+        }
         return Ok(0);
     }
     if let Command::SqlStats { database } = &cli.command {
@@ -892,6 +917,7 @@ mod tests {
                 selector: "BaseStore".into(),
                 path: "tests/".into(),
                 depth: DEFAULT_DEPTH,
+                group_files: false,
                 offset: 0,
                 limit: DEFAULT_LIMIT,
             }
@@ -911,5 +937,25 @@ mod tests {
             panic!("expected runnable command");
         };
         assert!(matches!(cli.command, Command::SqlTests { depth: 0, .. }));
+    }
+
+    #[test]
+    fn parses_file_grouped_sql_tests() {
+        let ParseResult::Run(cli) = parse(vec![
+            "sql-tests".into(),
+            "cache.sqlite".into(),
+            "BaseStore".into(),
+            "--group-files".into(),
+        ])
+        .expect("parse") else {
+            panic!("expected runnable command");
+        };
+        assert!(matches!(
+            cli.command,
+            Command::SqlTests {
+                group_files: true,
+                ..
+            }
+        ));
     }
 }

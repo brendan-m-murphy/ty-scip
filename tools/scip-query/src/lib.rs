@@ -18,7 +18,7 @@ use serde::Serialize;
 mod database;
 pub use database::{
     DatabaseStats, SqlDatabase, SqlReferencePage, SqlSelectionError, SqlSymbolCandidate,
-    SqlTestPage,
+    SqlTestFilePage, SqlTestFileSummary, SqlTestPage,
 };
 
 /// Default cap used by composite responses such as [`QueryIndex::context`].
