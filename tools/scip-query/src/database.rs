@@ -682,6 +682,11 @@ impl SqlDatabase {
                 ))
             });
             let representative = &rows[0];
+            let matched_symbols = rows
+                .iter()
+                .map(|row| row.target.as_str())
+                .collect::<BTreeSet<_>>()
+                .len();
             items.push(SqlTestFileSummary {
                 document,
                 depth: representative.depth,
@@ -690,7 +695,7 @@ impl SqlDatabase {
                 column: representative.column,
                 representative_target: representative.target.clone(),
                 representative_match_kind: representative.match_kind.clone(),
-                matched_symbols: rows.len(),
+                matched_symbols,
                 occurrences: rows.iter().map(|row| row.occurrences).sum(),
             });
         }
