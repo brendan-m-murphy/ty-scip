@@ -1,7 +1,7 @@
 # SCIP-to-Graphify spike
 
 Date: 2026-09-09
-Status: **working prototype; no default query backend proposed**
+Status: **frozen compatibility prototype; superseded by the lossless query/cache direction**
 
 ## Question
 

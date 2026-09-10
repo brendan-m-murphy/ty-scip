@@ -100,11 +100,15 @@ The experimental [lossless SCIP query tool](tools/scip-query/README.md) reads
 the protobuf directly and exposes exact symbol lookup, positions, references,
 members, bounded context, and evidence-backed traversal as deterministic JSON.
 It is designed to follow an `rg` hit without converting the index through a
-lossy database schema.
+lossy database schema. It is the candidate successor to the frozen Graphify
+conversion spike below; the two are not intended to remain maintained in
+parallel.
 
-The experimental [SCIP-to-Graphify consumer](tools/scip-graphify/README.md) is
-an independent Cargo package under `tools/`. It reads standard SCIP and does
-not depend on ty or Ruff. It is not included in the `ty-scip` Python wheel.
+The frozen [SCIP-to-Graphify spike](tools/scip-graphify/README.md) is retained
+temporarily for compatibility evidence. It reads standard SCIP, does not depend
+on ty or Ruff, and is not included in the `ty-scip` Python wheel. It receives no
+new features and should be removed after any needed compact export and unique
+compatibility fixtures move to the query tool.
 The [spike record](docs/research/scip-graphify-spike.md) documents its evidence
 and possible evidence-preserving query-store follow-up.
 

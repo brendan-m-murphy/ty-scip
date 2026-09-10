@@ -1,8 +1,13 @@
 # scip-graphify
 
-Experimental, indexer-neutral conversion from SCIP protobuf indexes to
-Graphify-compatible JSON. This is a separate Cargo package from `ty-scip` and
-depends only on SCIP, protobuf, and JSON serialization crates.
+**Frozen compatibility spike:** no new features are planned here. The lossless
+`scip-query`/SQLite implementation is the candidate successor; after any needed
+compact Graphify export and unique compatibility tests move there, this package
+should be removed rather than maintained as a second SCIP normalization engine.
+
+This indexer-neutral converter maps SCIP protobuf indexes to Graphify-compatible
+JSON. It is a separate Cargo package from `ty-scip` and depends only on SCIP,
+protobuf, and JSON serialization crates.
 
 ```console
 cargo run --release --manifest-path tools/scip-graphify/Cargo.toml -- \

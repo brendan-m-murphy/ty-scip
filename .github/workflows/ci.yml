@@ -30,6 +30,7 @@ jobs:
           toolchain: 1.96.0
       - run: cargo +1.96.0 check --locked --all-targets
       - run: cargo +1.96.0 check --locked --manifest-path tools/scip-graphify/Cargo.toml --all-targets
+      - run: cargo +1.96.0 check --locked --manifest-path tools/scip-query/Cargo.toml --all-targets
 
   scip-graphify:
     runs-on: ubuntu-latest
@@ -49,3 +50,15 @@ jobs:
       - run: cargo test --locked --manifest-path tools/scip-graphify/Cargo.toml --test graphify_compatibility -- --ignored --exact graphify_0_9_55_accepts_projection_and_traverses_directionally
         env:
           GRAPHIFY_BIN: graphify
+
+  scip-query:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          components: clippy, rustfmt
+      - run: cargo fmt --manifest-path tools/scip-query/Cargo.toml --all -- --check
+      - run: cargo clippy --locked --manifest-path tools/scip-query/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path tools/scip-query/Cargo.toml --all-targets
