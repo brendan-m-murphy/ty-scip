@@ -9,6 +9,7 @@ use scip::types::{
     symbol_information,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 const ALPHA: &str = "example package demo 1.0 pkg/Alpha#";
 const ALPHA_RUN: &str = "example package demo 1.0 pkg/Alpha#run().";
@@ -628,6 +629,12 @@ fn sqlite_cache_preserves_facts_and_groups_reference_occurrences() {
     assert_eq!(built["result"]["documents"], 7);
     assert_eq!(built["result"]["occurrences"], 25);
     assert_eq!(built["result"]["relationships"], 2);
+    assert_eq!(built["result"]["schema_version"], 1);
+    assert_eq!(built["result"]["authority"], "index.scip");
+    assert_eq!(
+        built["result"]["index_sha256"],
+        format!("{:x}", Sha256::digest(fs::read(&fixture.index).unwrap()))
+    );
 
     let stats = fixture.success(&["sql-stats", database_text]);
     assert_eq!(stats["result"], built["result"]);
@@ -658,6 +665,37 @@ fn sqlite_cache_preserves_facts_and_groups_reference_occurrences() {
             && item["relationship"]["is_implementation"] == true
             && item["provenance"] == "scip_relationship"
     }));
+}
+
+#[test]
+fn failed_database_build_leaves_no_destination_or_temporary_file() {
+    let fixture = Fixture::new();
+    let mut index = synthetic_index();
+    index.documents.push(index.documents[0].clone());
+    fs::write(&fixture.index, index.write_to_bytes().unwrap()).unwrap();
+    let database = fixture.root.join("broken.sqlite");
+    let output = fixture.command(&["build-db", database.to_str().unwrap()]);
+    assert!(!output.status.success());
+    assert!(!database.exists());
+    assert!(fs::read_dir(&fixture.root).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".tmp-")
+    }));
+}
+
+#[test]
+fn unrelated_database_is_rejected_with_rebuild_guidance() {
+    let fixture = Fixture::new();
+    let database = fixture.root.join("unrelated.sqlite");
+    fs::write(&database, b"not sqlite").unwrap();
+    let output = fixture.command(&["sql-stats", database.to_str().unwrap()]);
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("invalid scip-query cache"), "{error}");
+    assert!(error.contains("build-db"), "{error}");
 }
 
 #[test]

@@ -77,7 +77,8 @@ selectors include bounded suggestions.
   change surface, retaining the predecessor edge and its evidence for each
   result. Neither command implies runtime calls.
 - `build-db` creates a new normalized SQLite cache and refuses to overwrite an
-  existing file. It preserves occurrence multiplicity and raw occurrence,
+  existing file. It writes a temporary sibling and atomically installs the
+  completed cache, preserving occurrence multiplicity and raw occurrence,
   symbol-information, and relationship protobuf records.
 - `sql-refs` resolves symbols and queries the cache without decoding the full
   index. It groups repeated occurrences with the same source, target, document,
@@ -100,7 +101,9 @@ selectors include bounded suggestions.
   test function and behavioral source snippet over an import occurrence.
   `terminal_symbol` names the last implementation layer in the evidence path,
   and `follow_up_selectors` provides bounded selectors for the next query.
-- `sql-stats` reports cache row counts for parity checks.
+- `sql-stats` reports cache row counts, schema version, authority, and the
+  SHA-256 fingerprint of the source SCIP index. SQL commands reject missing or
+  unsupported cache metadata with rebuild guidance.
 
 SQL queries collapse document-local import bindings onto the global symbol when
 SCIP emits both occurrences at the same source range. A bare imported name such

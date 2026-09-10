@@ -3,7 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use protobuf::Message;
@@ -14,6 +15,9 @@ use serde::Serialize;
 use super::{QueryIndex, RefDirection, SourceRange, SymbolId, safe_source_path};
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
+
+const SCHEMA_VERSION: &str = "1";
+const CACHE_AUTHORITY: &str = "index.scip";
 
 const SCHEMA: &str = r#"
 CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -102,12 +106,22 @@ CREATE INDEX relationships_target ON relationships(target_symbol_id);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DatabaseStats {
+    pub schema_version: u32,
+    pub authority: String,
+    pub index_sha256: String,
     pub documents: usize,
     pub symbols: usize,
     pub symbol_information: usize,
     pub occurrences: usize,
     pub definitions: usize,
     pub relationships: usize,
+}
+
+#[derive(Clone, Debug)]
+struct DatabaseMetadata {
+    schema_version: u32,
+    authority: String,
+    index_sha256: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -254,6 +268,32 @@ impl QueryIndex {
             )
             .into());
         }
+        let temporary = temporary_database_path(path)?;
+        match self.write_database_file(&temporary) {
+            Ok(stats) => {
+                if path.exists() {
+                    let _ = fs::remove_file(&temporary);
+                    return Err(format!(
+                        "refusing to overwrite existing database: {}",
+                        path.display()
+                    )
+                    .into());
+                }
+                if let Err(error) = fs::rename(&temporary, path) {
+                    let _ = fs::remove_file(&temporary);
+                    return Err(error.into());
+                }
+                Ok(stats)
+            }
+            Err(error) => {
+                let _ = fs::remove_file(&temporary);
+                Err(error)
+            }
+        }
+    }
+
+    fn write_database_file(&self, path: &Path) -> Result<DatabaseStats> {
+        let index_sha256 = self.index_sha256.clone();
         let mut connection = Connection::open(path)?;
         connection.execute_batch(
             "PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA temp_store=MEMORY;",
@@ -261,8 +301,9 @@ impl QueryIndex {
         let transaction = connection.transaction()?;
         transaction.execute_batch(SCHEMA)?;
         transaction.execute(
-            "INSERT INTO metadata(key, value) VALUES ('schema_version', '1'), ('authority', 'index.scip')",
-            [],
+            "INSERT INTO metadata(key, value) VALUES
+             ('schema_version', ?), ('authority', ?), ('index_sha256', ?)",
+            params![SCHEMA_VERSION, CACHE_AUTHORITY, index_sha256],
         )?;
 
         let document_ids: BTreeMap<_, _> = self
@@ -418,6 +459,9 @@ impl QueryIndex {
         transaction.commit()?;
         connection.execute_batch("PRAGMA optimize;")?;
         Ok(DatabaseStats {
+            schema_version: SCHEMA_VERSION.parse()?,
+            authority: CACHE_AUTHORITY.to_owned(),
+            index_sha256,
             documents: document_ids.len(),
             symbols: symbol_ids.len(),
             symbol_information: information_count,
@@ -431,6 +475,7 @@ impl QueryIndex {
 pub struct SqlDatabase {
     connection: Connection,
     root: Option<PathBuf>,
+    metadata: DatabaseMetadata,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -499,7 +544,12 @@ impl SqlDatabase {
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        Ok(Self { connection, root })
+        let metadata = read_database_metadata(&connection)?;
+        Ok(Self {
+            connection,
+            root,
+            metadata,
+        })
     }
 
     pub fn stats(&self) -> Result<DatabaseStats> {
@@ -509,6 +559,9 @@ impl SqlDatabase {
             Ok(value as usize)
         };
         Ok(DatabaseStats {
+            schema_version: self.metadata.schema_version,
+            authority: self.metadata.authority.clone(),
+            index_sha256: self.metadata.index_sha256.clone(),
             documents: count("documents")?,
             symbols: count("symbols")?,
             symbol_information: count("symbol_information")?,
@@ -1148,6 +1201,84 @@ impl SqlDatabase {
     }
 }
 
+fn temporary_database_path(destination: &Path) -> Result<PathBuf> {
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let name = destination
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "database path has no name"))?
+        .to_string_lossy();
+    for attempt in 0..1000 {
+        let candidate = parent.join(format!(".{name}.tmp-{}-{attempt}", std::process::id()));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => {
+                drop(file);
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!(
+            "could not allocate temporary database beside {}",
+            destination.display()
+        ),
+    )
+    .into())
+}
+
+fn read_database_metadata(connection: &Connection) -> Result<DatabaseMetadata> {
+    let mut statement = connection
+        .prepare("SELECT key,value FROM metadata")
+        .map_err(|error| invalid_cache(error.to_string()))?;
+    let values: BTreeMap<String, String> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|error| invalid_cache(error.to_string()))?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(|error| invalid_cache(error.to_string()))?;
+    let version = values
+        .get("schema_version")
+        .ok_or_else(|| invalid_cache("missing schema_version"))?;
+    if version != SCHEMA_VERSION {
+        return Err(invalid_cache(format!(
+            "unsupported schema_version {version:?}; expected {SCHEMA_VERSION}"
+        ))
+        .into());
+    }
+    let authority = values
+        .get("authority")
+        .filter(|value| value.as_str() == CACHE_AUTHORITY)
+        .ok_or_else(|| invalid_cache("missing or unsupported authority"))?
+        .clone();
+    let index_sha256 = values
+        .get("index_sha256")
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| invalid_cache("missing or invalid index_sha256"))?
+        .clone();
+    Ok(DatabaseMetadata {
+        schema_version: version.parse().expect("validated schema version"),
+        authority,
+        index_sha256,
+    })
+}
+
+fn invalid_cache(reason: impl fmt::Display) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "invalid scip-query cache ({reason}); rebuild it with `scip-query --index INDEX.scip build-db DATABASE`"
+        ),
+    )
+}
+
 fn absorb_group(
     groups: &mut BTreeMap<ReferenceKey, ReferenceGroup>,
     key: ReferenceKey,
@@ -1263,4 +1394,26 @@ fn range_columns(
 
 fn enum_json(value: &impl Serialize) -> Result<String> {
     Ok(serde_json::to_string(value)?.trim_matches('"').to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn future_cache_schema_is_rejected_with_rebuild_guidance() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO metadata VALUES
+                 ('schema_version', '2'),
+                 ('authority', 'index.scip'),
+                 ('index_sha256', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');",
+            )
+            .unwrap();
+        let error = read_database_metadata(&connection).unwrap_err().to_string();
+        assert!(error.contains("unsupported schema_version"), "{error}");
+        assert!(error.contains("build-db"), "{error}");
+    }
 }

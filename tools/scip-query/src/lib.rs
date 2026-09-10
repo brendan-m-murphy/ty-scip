@@ -14,6 +14,7 @@ use std::path::{Component, Path, PathBuf};
 use protobuf::{Enum, Message};
 use scip::types::{Index, Occurrence, PositionEncoding, SymbolInformation, SymbolRole, occurrence};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 mod database;
 pub use database::{
@@ -388,6 +389,7 @@ struct SymbolData {
 /// Decoded SCIP plus deterministic, in-memory navigation indexes.
 pub struct QueryIndex {
     raw: Index,
+    index_sha256: String,
     root: Option<PathBuf>,
     documents: BTreeMap<String, usize>,
     symbols: BTreeMap<SymbolId, SymbolData>,
@@ -405,11 +407,14 @@ impl QueryIndex {
 
     /// Decode SCIP bytes and build their navigation indexes.
     pub fn from_bytes(bytes: &[u8], root: Option<PathBuf>) -> Result<Self, QueryError> {
-        Self::from_index(Index::parse_from_bytes(bytes)?, root)
+        let mut index = Self::from_index(Index::parse_from_bytes(bytes)?, root)?;
+        index.index_sha256 = format!("{:x}", Sha256::digest(bytes));
+        Ok(index)
     }
 
     /// Build navigation indexes while retaining `raw` unchanged as authority.
     pub fn from_index(raw: Index, root: Option<PathBuf>) -> Result<Self, QueryError> {
+        let index_sha256 = format!("{:x}", Sha256::digest(raw.write_to_bytes()?));
         let documents = raw
             .documents
             .iter()
@@ -418,6 +423,7 @@ impl QueryIndex {
             .collect();
         let mut this = Self {
             raw,
+            index_sha256,
             root,
             documents,
             symbols: BTreeMap::new(),
