@@ -1,8 +1,8 @@
-use std::{collections::BTreeMap, env, path::PathBuf, process::ExitCode};
+use std::{env, path::PathBuf, process::ExitCode};
 
 use scip_query::{
-    CallView, OccurrenceView, Page, QueryIndex, RefDirection, ReferenceEvidence, ReferenceView,
-    Resolution, SourceRange, SymbolId, SymbolView,
+    IdeCallView, IdeItemView, IdeLocationView, IdeReferenceView, OccurrenceView, Page, QueryIndex,
+    RefDirection, ReferenceEvidence, ReferenceView, Resolution, SourceRange, SymbolId, SymbolView,
 };
 use serde_json::{Value, json};
 
@@ -200,43 +200,83 @@ fn execute(cli: Cli) -> Result<u8, String> {
         }
     };
     let result = match cli.command.as_str() {
-        "definition" => json!(map_page(
-            index.definitions(&symbol.id, cli.limit),
-            |definition| definition_projection(&index, &symbol, &definition)
-        )),
-        "hover" => {
-            json!({
-                "documentation": index.documentation(&symbol.id),
-                "signatures": index.signatures(&symbol.id).into_iter().map(|item| item.text).collect::<Vec<_>>(),
-                "symbol": symbol_projection(&index, &symbol),
-            })
-        }
-        "references" => {
-            let mut items = index
-                .refs(&symbol.id, RefDirection::Incoming, usize::MAX)
-                .items
-                .into_iter()
-                .filter(|reference| {
-                    matches!(
-                        &reference.evidence,
-                        ReferenceEvidence::Occurrence { occurrence }
-                            if !occurrence.role_names.contains(&"import")
-                    )
+        "definition" => index.ide_definitions(&symbol.id, cli.limit).map_or_else(
+            || {
+                json!(map_page(
+                    index.definitions(&symbol.id, cli.limit),
+                    |definition| definition_projection(&index, &symbol, &definition)
+                ))
+            },
+            |definitions| {
+                map_page(definitions, |definition| {
+                    ide_definition_projection(&symbol, definition)
                 })
-                .collect::<Vec<_>>();
+            },
+        ),
+        "hover" => index.ide_hover(&symbol.id).map_or_else(
+            || {
+                json!({
+                    "documentation": index.documentation(&symbol.id),
+                    "signatures": index.signatures(&symbol.id).into_iter().map(|item| item.text).collect::<Vec<_>>(),
+                    "symbol": symbol_projection(&index, &symbol),
+                })
+            },
+            |contents| {
+                json!({
+                    "contents": contents,
+                    "symbol": symbol_projection(&index, &symbol),
+                })
+            },
+        ),
+        "references" => {
+            let exact = index.ide_references(&symbol.id, usize::MAX);
+            let mut exact_items = exact
+                .as_ref()
+                .map(|page| page.items.clone())
+                .unwrap_or_default();
+            let mut fallback_items = exact.is_none().then(|| {
+                index
+                    .refs(&symbol.id, RefDirection::Incoming, usize::MAX)
+                    .items
+                    .into_iter()
+                    .filter(|reference| {
+                        matches!(
+                            &reference.evidence,
+                            ReferenceEvidence::Occurrence { occurrence }
+                                if !occurrence.role_names.contains(&"import")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            });
             if let Some(prefix) = cli.path.as_deref() {
-                items.retain(|reference| {
-                    reference_document(reference)
-                        .is_some_and(|document| document.starts_with(prefix))
-                });
+                exact_items.retain(|reference| reference.document.starts_with(prefix));
+                if let Some(items) = &mut fallback_items {
+                    items.retain(|reference| {
+                        reference_document(reference)
+                            .is_some_and(|document| document.starts_with(prefix))
+                    });
+                }
             }
-            let total = items.len();
-            let items = items
-                .iter()
-                .skip(cli.offset)
-                .take(cli.limit)
-                .map(|reference| reference_projection(&index, reference))
-                .collect::<Vec<_>>();
+            let total = exact.as_ref().map_or_else(
+                || fallback_items.as_ref().map_or(0, Vec::len),
+                |_| exact_items.len(),
+            );
+            let items = if exact.is_some() {
+                exact_items
+                    .into_iter()
+                    .skip(cli.offset)
+                    .take(cli.limit)
+                    .map(ide_reference_projection)
+                    .collect::<Vec<_>>()
+            } else {
+                fallback_items
+                    .unwrap_or_default()
+                    .iter()
+                    .skip(cli.offset)
+                    .take(cli.limit)
+                    .map(|reference| reference_projection(&index, reference))
+                    .collect::<Vec<_>>()
+            };
             let returned = items.len();
             let next_offset = (cli.offset + returned < total).then_some(cli.offset + returned);
             json!({
@@ -251,7 +291,7 @@ fn execute(cli: Cli) -> Result<u8, String> {
         "members" => json!(map_page(index.members(&symbol.id, cli.limit), |member| {
             definition_projection(&index, &member.symbol, &member.definition)
         })),
-        "callers" => calls_projection(
+        "callers" => ide_calls_projection(
             &index,
             index
                 .callers(&symbol.id, usize::MAX)
@@ -260,7 +300,7 @@ fn execute(cli: Cli) -> Result<u8, String> {
             cli.limit,
             true,
         ),
-        "callees" => calls_projection(
+        "callees" => ide_calls_projection(
             &index,
             index
                 .callees(&symbol.id, usize::MAX)
@@ -269,14 +309,14 @@ fn execute(cli: Cli) -> Result<u8, String> {
             cli.limit,
             false,
         ),
-        "supertypes" => json!(map_page(
-            index.supertypes(&symbol.id, cli.limit),
-            |relationship| symbol_projection_from_id(&index, &relationship.target)
-        )),
-        "subtypes" => json!(map_page(
-            index.subtypes(&symbol.id, cli.limit),
-            |relationship| symbol_projection_from_id(&index, &relationship.source)
-        )),
+        "supertypes" => index.ide_supertypes(&symbol.id, cli.limit).map_or_else(
+            || json!(map_page(index.supertypes(&symbol.id, cli.limit), |relationship| symbol_projection_from_id(&index, &relationship.target))),
+            |items| map_page(items, |item| ide_item_projection(&index, item)),
+        ),
+        "subtypes" => index.ide_subtypes(&symbol.id, cli.limit).map_or_else(
+            || json!(map_page(index.subtypes(&symbol.id, cli.limit), |relationship| symbol_projection_from_id(&index, &relationship.source))),
+            |items| map_page(items, |item| ide_item_projection(&index, item)),
+        ),
         _ => unreachable!(),
     };
     emit(&json!({
@@ -386,6 +426,13 @@ fn reference_projection(index: &QueryIndex, reference: &ReferenceView) -> Value 
     })
 }
 
+fn ide_reference_projection(reference: IdeReferenceView) -> Value {
+    json!({
+        "location": location(&reference.document, reference.range),
+        "reference_kind": reference.reference_kind,
+    })
+}
+
 fn map_page<T>(page: Page<T>, mut project: impl FnMut(T) -> Value) -> Value {
     json!({
         "items": page.items.into_iter().map(&mut project).collect::<Vec<_>>(),
@@ -436,6 +483,15 @@ fn definition_projection(
     })
 }
 
+fn ide_definition_projection(symbol: &SymbolView, definition: IdeLocationView) -> Value {
+    json!({
+        "location": location(&definition.document, definition.range),
+        "name": symbol.display_name,
+        "qualified_name": symbol.qualified_name,
+        "selector": symbol.qualified_name,
+    })
+}
+
 fn occurrence_projection(index: &QueryIndex, occurrence: OccurrenceView) -> Value {
     json!({
         "location": occurrence.range.map(|range| location(&occurrence.document, range)),
@@ -466,36 +522,27 @@ fn without_shadowed_import_bindings(items: Vec<OccurrenceView>) -> Vec<Occurrenc
         .collect()
 }
 
-fn calls_projection(
+fn ide_calls_projection(
     index: &QueryIndex,
-    calls: Vec<CallView>,
+    calls: Vec<IdeCallView>,
     limit: usize,
     incoming: bool,
 ) -> Value {
-    let mut groups = BTreeMap::<SymbolId, Vec<(String, SourceRange)>>::new();
-    for call in calls {
-        let symbol = if incoming { call.caller } else { call.callee };
-        groups
-            .entry(symbol)
-            .or_default()
-            .push((call.document, call.range));
-    }
-    let total = groups.len();
-    let items = groups
+    let total = calls.len();
+    let items = calls
         .into_iter()
         .take(limit)
-        .map(|(symbol, mut ranges)| {
-            ranges.sort();
-            ranges.dedup();
-            let symbol = symbol_projection_from_id(index, &symbol);
-            let from_ranges = ranges
+        .map(|call| {
+            let item = ide_item_projection(index, call.item);
+            let from_ranges = call
+                .from_ranges
                 .into_iter()
-                .map(|(path, range)| location(&path, range))
+                .map(|range| location(&call.from_document, range))
                 .collect::<Vec<_>>();
             if incoming {
-                json!({"from": symbol, "from_ranges": from_ranges})
+                json!({"from": item, "from_ranges": from_ranges})
             } else {
-                json!({"to": symbol, "from_ranges": from_ranges})
+                json!({"to": item, "from_ranges": from_ranges})
             }
         })
         .collect::<Vec<_>>();
@@ -505,6 +552,24 @@ fn calls_projection(
         "returned": returned,
         "total": total,
         "truncated": total > returned,
+    })
+}
+
+fn ide_item_projection(index: &QueryIndex, item: IdeItemView) -> Value {
+    let qualified_name = item.symbol.as_ref().map_or_else(
+        || {
+            item.detail
+                .as_ref()
+                .map(|detail| format!("{detail}.{}", item.name))
+                .unwrap_or_else(|| item.name.clone())
+        },
+        |symbol| symbol_label(index, symbol),
+    );
+    json!({
+        "location": location(&item.document, item.range),
+        "name": item.name,
+        "qualified_name": qualified_name,
+        "selector": qualified_name,
     })
 }
 

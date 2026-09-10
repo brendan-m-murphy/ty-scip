@@ -42,29 +42,55 @@ impl Fixture {
             &facts,
             serde_json::to_vec_pretty(&json!({
                 "format": "ty-scip-facts",
-                "version": 1,
+                "version": 2,
                 "index_sha256": format!("{:x}", Sha256::digest(&bytes)),
-                "facts": [
+                "symbols": [
                     {
-                        "kind": "callee_position",
                         "document": "pkg/models.py",
-                        "range": [3, 8, 14],
-                        "enclosing_symbol": RUN,
-                        "symbol": HELPER,
-                    },
-                    {
-                        "kind": "callee_position",
-                        "document": "pkg/models.py",
-                        "range": [4, 8, 14],
-                        "enclosing_symbol": RUN,
-                        "symbol": HELPER,
-                    },
-                    {
-                        "kind": "callee_position",
-                        "document": "tests/test_models.py",
-                        "range": [2, 4, 7],
-                        "enclosing_symbol": TEST,
                         "symbol": RUN,
+                        "item": {
+                            "document": "pkg/models.py",
+                            "symbol": RUN,
+                            "name": "run",
+                            "detail": "pkg.models",
+                            "range": [1, 8, 11],
+                            "full_range": [1, 4, 5, 0]
+                        },
+                        "definitions": [{
+                            "document": "pkg/models.py",
+                            "range": [1, 8, 11],
+                            "full_range": [1, 4, 5, 0]
+                        }],
+                        "hover": "def run(self) -> int",
+                        "references": [{
+                            "document": "tests/test_models.py",
+                            "range": [2, 4, 7],
+                            "reference_kind": "read"
+                        }],
+                        "incoming_calls": [{
+                            "item": {
+                                "document": "tests/test_models.py",
+                                "symbol": TEST,
+                                "name": "test_run",
+                                "detail": "tests.test_models",
+                                "range": [0, 4, 12],
+                                "full_range": [0, 0, 3, 0]
+                            },
+                            "from_ranges": [[2, 4, 7]]
+                        }],
+                        "outgoing_calls": [{
+                            "item": {
+                                "document": "pkg/helper.py",
+                                "symbol": HELPER,
+                                "name": "helper",
+                                "detail": "pkg.helper",
+                                "range": [0, 4, 10],
+                                "full_range": [0, 0, 2, 0]
+                            },
+                            "from_ranges": [[3, 8, 14], [4, 8, 14]]
+                        }],
+                        "supertypes": [],
+                        "subtypes": []
                     }
                 ],
             }))
@@ -214,8 +240,8 @@ fn exposes_the_minimal_navigation_surface() {
         "pkg.Alpha.run",
     );
     assert_eq!(
-        fixture.success(&["hover", "Alpha.run"])["result"]["documentation"][0],
-        "Run the model."
+        fixture.success(&["hover", "Alpha.run"])["result"]["contents"],
+        "def run(self) -> int"
     );
     assert_eq!(
         fixture.success(&["definition", "Alpha.run"])["result"]["total"],
@@ -251,7 +277,7 @@ fn exposes_the_minimal_navigation_surface() {
 }
 
 #[test]
-fn uses_fingerprinted_callee_evidence_for_both_directions() {
+fn uses_fingerprinted_ty_ide_results_for_navigation() {
     let fixture = Fixture::new();
 
     let callees = fixture.success(&["callees", "Alpha.run"]);
@@ -260,6 +286,11 @@ fn uses_fingerprinted_callee_evidence_for_both_directions() {
         callees["result"]["items"][0]["to"]["selector"],
         "pkg.helper"
     );
+
+    let hover = fixture.success(&["hover", "Alpha.run"]);
+    assert_eq!(hover["result"]["contents"], "def run(self) -> int");
+    let references = fixture.success(&["references", "Alpha.run"]);
+    assert_eq!(references["result"]["items"][0]["reference_kind"], "read");
     assert_eq!(
         callees["result"]["items"][0]["from_ranges"]
             .as_array()
@@ -279,9 +310,9 @@ fn uses_fingerprinted_callee_evidence_for_both_directions() {
         &fixture.facts,
         json!({
             "format": "ty-scip-facts",
-            "version": 1,
+            "version": 2,
             "index_sha256": "stale",
-            "facts": [],
+            "symbols": [],
         })
         .to_string(),
     )

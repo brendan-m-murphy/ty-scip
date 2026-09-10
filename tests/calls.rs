@@ -8,7 +8,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 #[test]
-fn emits_only_resolved_references_in_callee_position() {
+fn emits_ty_ide_navigation_results() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time after Unix epoch")
@@ -49,35 +49,38 @@ fn emits_only_resolved_references_in_callee_position() {
     let sidecar: Value =
         serde_json::from_slice(&fs::read(&facts).expect("read ty facts")).expect("decode ty facts");
     assert_eq!(sidecar["format"], "ty-scip-facts");
-    assert_eq!(sidecar["version"], 1);
+    assert_eq!(sidecar["version"], 2);
     assert_eq!(
         sidecar["index_sha256"],
         format!("{:x}", Sha256::digest(index_bytes))
     );
-    let facts = sidecar["facts"].as_array().expect("facts array");
-    assert_eq!(facts.len(), 2, "{facts:#?}");
-    assert!(
-        facts
-            .iter()
-            .all(|fact| fact["kind"] == "callee_position" && fact["document"] == "main.py")
+    let symbols = sidecar["symbols"].as_array().expect("symbols array");
+    let wrapper = symbols
+        .iter()
+        .find(|fact| {
+            fact["symbol"]
+                .as_str()
+                .is_some_and(|symbol| symbol.ends_with("wrapper()."))
+        })
+        .expect("wrapper IDE results");
+    assert_eq!(wrapper["hover"], "def wrapper(worker: Worker) -> Unknown");
+    let calls = wrapper["outgoing_calls"]
+        .as_array()
+        .expect("outgoing calls");
+    assert_eq!(calls.len(), 2, "{calls:#?}");
+    let leaf = calls
+        .iter()
+        .find(|call| call["item"]["name"] == "leaf")
+        .expect("leaf call");
+    assert_eq!(
+        leaf["from_ranges"],
+        serde_json::json!([[8, 4, 8], [12, 4, 12]])
     );
-    assert_eq!(facts[0]["range"], serde_json::json!([8, 4, 8]));
-    assert_eq!(facts[1]["range"], serde_json::json!([9, 11, 14]));
-    assert!(
-        facts[0]["enclosing_symbol"]
-            .as_str()
-            .is_some_and(|symbol| symbol.ends_with("wrapper()."))
-    );
-    assert!(
-        facts[0]["symbol"]
-            .as_str()
-            .is_some_and(|symbol| symbol.ends_with("leaf()."))
-    );
-    assert!(
-        facts[1]["symbol"]
-            .as_str()
-            .is_some_and(|symbol| symbol.ends_with("Worker#run()."))
-    );
+    let run = calls
+        .iter()
+        .find(|call| call["item"]["name"] == "run")
+        .expect("method call");
+    assert_eq!(run["from_ranges"], serde_json::json!([[9, 11, 14]]));
 
     fs::remove_dir_all(root).expect("remove project");
 }

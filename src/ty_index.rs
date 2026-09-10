@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, hash_map::Entry},
+    collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
     fs,
     path::PathBuf,
 };
@@ -14,9 +14,10 @@ use ruff_python_ast::{
     AnyNodeRef, Expr, ExprContext, Identifier,
     visitor::source_order::{SourceOrderVisitor, TraversalSignal},
 };
+use ruff_source_file::{LineIndex, PositionEncoding as RuffPositionEncoding};
 use ruff_text_size::{Ranged, TextRange, TextSize};
 use scip::types::SymbolRole;
-use ty_ide::{HierarchicalSymbols, SymbolId, SymbolInfo, SymbolKind};
+use ty_ide::{HierarchicalSymbols, MarkupKind, ReferenceKind, SymbolId, SymbolInfo, SymbolKind};
 use ty_module_resolver::file_to_module;
 use ty_project::{Db as _, ProjectDatabase, ProjectMetadata};
 use ty_python_core::{
@@ -32,7 +33,8 @@ use ty_python_semantic::{
 };
 
 use crate::scip_emit::{
-    DefinitionKind, DescriptorKind, Edge, FileData, PackageIdentity, RelationshipEdge, SymbolData,
+    DefinitionKind, DescriptorKind, Edge, FileData, IdeCallData, IdeItemData, IdeLocationData,
+    IdeReferenceData, IdeSymbolData, PackageIdentity, RelationshipEdge, SymbolData,
     SymbolDescriptor, global_symbol, is_named_member, local_symbol, member_symbol,
     parameter_symbol,
 };
@@ -41,6 +43,7 @@ pub(crate) struct IndexData {
     pub(crate) root: PathBuf,
     pub(crate) files: Vec<FileData>,
     pub(crate) edges: Vec<Edge>,
+    pub(crate) ide_symbols: Vec<IdeSymbolData>,
     pub(crate) unresolved: usize,
     pub(crate) ambiguous: usize,
     pub(crate) external: usize,
@@ -53,22 +56,6 @@ pub(crate) struct IndexData {
 struct IdentifierRanges {
     identifiers: Vec<(TextRange, bool, bool)>,
     string_literals: Vec<TextRange>,
-}
-
-#[derive(Default)]
-struct CalleeRanges(Vec<TextRange>);
-
-impl<'ast> SourceOrderVisitor<'ast> for CalleeRanges {
-    fn enter_node(&mut self, node: AnyNodeRef<'ast>) -> TraversalSignal {
-        if let AnyNodeRef::ExprCall(call) = node {
-            match call.func.as_ref() {
-                Expr::Name(name) => self.0.push(name.range()),
-                Expr::Attribute(attribute) => self.0.push(attribute.attr.range()),
-                _ => {}
-            }
-        }
-        TraversalSignal::Traverse
-    }
 }
 
 #[derive(Default)]
@@ -294,6 +281,7 @@ pub(crate) fn index(
     sample_limit: usize,
     project_name: Option<String>,
     project_version: Option<String>,
+    include_ide_facts: bool,
 ) -> Result<IndexData, String> {
     let system_root = SystemPathBuf::from_path_buf(discovery_root)
         .map_err(|path| format!("project path is not UTF-8: {}", path.display()))?;
@@ -388,12 +376,6 @@ pub(crate) fn index(
             roles.visit_body(module.suite());
             roles.0
         };
-        let callee_ranges = {
-            let module = parsed_module(&db, program_file.python_file(&db)).load(&db);
-            let mut ranges = CalleeRanges::default();
-            ranges.visit_body(module.suite());
-            ranges.0
-        };
         let (locals, semantic_bindings, canonical_definition_ranges) =
             allocate_semantic_symbols(&db, program_file, &source, &mut globals);
         data.push(FileData {
@@ -404,7 +386,6 @@ pub(crate) fn index(
             semantic_bindings,
             canonical_definition_ranges,
             occurrence_roles,
-            callee_ranges,
             relationships: Vec::new(),
             external_references: Vec::new(),
         });
@@ -647,10 +628,17 @@ pub(crate) fn index(
         file.external_references = references;
     }
 
+    let ide_symbols = if include_ide_facts {
+        collect_ide_symbols(&db, &files, &file_indices, &data, &mut external_symbols)
+    } else {
+        Vec::new()
+    };
+
     Ok(IndexData {
         root,
         files: data,
         edges,
+        ide_symbols,
         unresolved,
         ambiguous,
         external,
@@ -743,6 +731,395 @@ fn external_symbol(
         entry.insert(symbols);
     }
     cache.get(&target_file)?.get(&target_range).cloned()
+}
+
+fn collect_ide_symbols(
+    db: &ProjectDatabase,
+    files: &[File],
+    file_indices: &HashMap<File, usize>,
+    data: &[FileData],
+    external_symbols: &mut HashMap<File, HashMap<TextRange, SymbolData>>,
+) -> Vec<IdeSymbolData> {
+    let mut subjects = BTreeMap::new();
+    for (file_index, file) in data.iter().enumerate() {
+        for (range, symbol) in file.globals.iter().chain(&file.locals) {
+            if matches!(symbol.kind, DefinitionKind::Module | DefinitionKind::Import)
+                || file
+                    .occurrence_roles
+                    .get(range)
+                    .is_some_and(|roles| roles & SymbolRole::Import as i32 != 0)
+            {
+                continue;
+            }
+            let identity_document = if symbol.is_local() {
+                file.relative_path.as_str()
+            } else {
+                ""
+            };
+            match subjects.entry((identity_document.to_owned(), symbol.symbol.clone())) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert((file_index, *range, symbol.clone()));
+                }
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    let (existing_file, existing_range, _) = entry.get();
+                    if (&file.relative_path, range.start(), range.end())
+                        < (
+                            &data[*existing_file].relative_path,
+                            existing_range.start(),
+                            existing_range.end(),
+                        )
+                    {
+                        entry.insert((file_index, *range, symbol.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut range_cache = HashMap::new();
+    let mut output = Vec::with_capacity(subjects.len());
+    for (_, (file_index, range, symbol)) in subjects {
+        let file = files[file_index];
+        let program_file = db.program_file(file);
+        let Some(item) = ide_item_from_parts(
+            db,
+            file,
+            range,
+            symbol.full_range,
+            symbol.display_name.clone(),
+            file_to_module(db, program_file.resolver_file(db))
+                .map(|module| module.name(db).to_string()),
+            Some(symbol.symbol.clone()),
+            file_indices,
+            data,
+            &mut range_cache,
+        ) else {
+            continue;
+        };
+
+        let mut definitions = ty_ide::goto_definition(db, program_file, range.start())
+            .into_iter()
+            .flat_map(|result| result.value)
+            .filter_map(|target| {
+                ide_location(
+                    db,
+                    target.file(),
+                    target.focus_range(),
+                    target.full_range(),
+                    file_indices,
+                    data,
+                    &mut range_cache,
+                )
+            })
+            .collect::<Vec<_>>();
+        definitions.sort();
+        definitions.dedup();
+
+        let hover = ty_ide::hover(db, program_file, range.start())
+            .map(|result| result.value.display(db, MarkupKind::PlainText).to_string());
+
+        let mut references = ty_ide::find_references(db, program_file, range.start(), false)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|target| {
+                let document = ide_document(db, target.file(), file_indices, data);
+                let range = ide_range(db, target.file(), target.range(), &mut range_cache)?;
+                let reference_kind = match target.kind() {
+                    ReferenceKind::Read => "read",
+                    ReferenceKind::Write => "write",
+                    ReferenceKind::Other => "other",
+                };
+                Some(IdeReferenceData {
+                    document,
+                    range,
+                    reference_kind,
+                })
+            })
+            .collect::<Vec<_>>();
+        references.sort();
+        references.dedup();
+
+        let (mut incoming_calls, mut outgoing_calls) = if is_callable_kind(symbol.kind) {
+            let incoming = ty_ide::incoming_calls(db, program_file, range.start())
+                .into_iter()
+                .filter_map(|call| {
+                    ide_call(
+                        db,
+                        call.from,
+                        call.from_ranges,
+                        None,
+                        file_indices,
+                        data,
+                        external_symbols,
+                        &mut range_cache,
+                    )
+                })
+                .collect();
+            let outgoing = ty_ide::outgoing_calls(db, program_file, range.start())
+                .into_iter()
+                .filter_map(|call| {
+                    ide_call(
+                        db,
+                        call.to,
+                        call.from_ranges,
+                        Some(file),
+                        file_indices,
+                        data,
+                        external_symbols,
+                        &mut range_cache,
+                    )
+                })
+                .collect();
+            (incoming, outgoing)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        incoming_calls.sort();
+        incoming_calls.dedup();
+        outgoing_calls.sort();
+        outgoing_calls.dedup();
+
+        let (mut supertypes, mut subtypes) = if symbol.kind == DefinitionKind::Class {
+            let supertypes = ty_ide::type_hierarchy_supertypes(db, program_file, range.start())
+                .into_iter()
+                .filter_map(|target| {
+                    ide_type_item(
+                        db,
+                        target,
+                        file_indices,
+                        data,
+                        external_symbols,
+                        &mut range_cache,
+                    )
+                })
+                .collect();
+            let subtypes = ty_ide::type_hierarchy_subtypes(db, program_file, range.start())
+                .into_iter()
+                .filter_map(|target| {
+                    ide_type_item(
+                        db,
+                        target,
+                        file_indices,
+                        data,
+                        external_symbols,
+                        &mut range_cache,
+                    )
+                })
+                .collect();
+            (supertypes, subtypes)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        supertypes.sort();
+        supertypes.dedup();
+        subtypes.sort();
+        subtypes.dedup();
+
+        output.push(IdeSymbolData {
+            document: data[file_index].relative_path.clone(),
+            symbol: symbol.symbol,
+            item,
+            definitions,
+            hover,
+            references,
+            incoming_calls,
+            outgoing_calls,
+            supertypes,
+            subtypes,
+        });
+    }
+    output.sort();
+    output
+}
+
+fn is_callable_kind(kind: DefinitionKind) -> bool {
+    matches!(
+        kind,
+        DefinitionKind::Class
+            | DefinitionKind::Method
+            | DefinitionKind::Function
+            | DefinitionKind::Constructor
+    )
+}
+
+type IdeRangeCache = HashMap<File, (String, LineIndex)>;
+
+#[allow(clippy::too_many_arguments)]
+fn ide_call(
+    db: &ProjectDatabase,
+    item: ty_ide::CallHierarchyItem,
+    from_ranges: Vec<TextRange>,
+    ranges_file: Option<File>,
+    file_indices: &HashMap<File, usize>,
+    data: &[FileData],
+    external_symbols: &mut HashMap<File, HashMap<TextRange, SymbolData>>,
+    range_cache: &mut IdeRangeCache,
+) -> Option<IdeCallData> {
+    let ranges_file = ranges_file.unwrap_or(item.file);
+    let mut from_ranges = from_ranges
+        .into_iter()
+        .filter_map(|range| ide_range(db, ranges_file, range, range_cache))
+        .collect::<Vec<_>>();
+    from_ranges.sort();
+    from_ranges.dedup();
+    let symbol = ide_target_symbol(
+        db,
+        item.file,
+        item.selection_range,
+        file_indices,
+        data,
+        external_symbols,
+    );
+    Some(IdeCallData {
+        item: ide_item_from_parts(
+            db,
+            item.file,
+            item.selection_range,
+            item.full_range,
+            item.name.to_string(),
+            item.detail,
+            symbol,
+            file_indices,
+            data,
+            range_cache,
+        )?,
+        from_ranges,
+    })
+}
+
+fn ide_type_item(
+    db: &ProjectDatabase,
+    item: ty_ide::TypeHierarchyItem,
+    file_indices: &HashMap<File, usize>,
+    data: &[FileData],
+    external_symbols: &mut HashMap<File, HashMap<TextRange, SymbolData>>,
+    range_cache: &mut IdeRangeCache,
+) -> Option<IdeItemData> {
+    let symbol = ide_target_symbol(
+        db,
+        item.file,
+        item.selection_range,
+        file_indices,
+        data,
+        external_symbols,
+    );
+    ide_item_from_parts(
+        db,
+        item.file,
+        item.selection_range,
+        item.full_range,
+        item.name.to_string(),
+        item.detail,
+        symbol,
+        file_indices,
+        data,
+        range_cache,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ide_item_from_parts(
+    db: &ProjectDatabase,
+    file: File,
+    range: TextRange,
+    full_range: TextRange,
+    name: String,
+    detail: Option<String>,
+    symbol: Option<String>,
+    file_indices: &HashMap<File, usize>,
+    data: &[FileData],
+    range_cache: &mut IdeRangeCache,
+) -> Option<IdeItemData> {
+    Some(IdeItemData {
+        document: ide_document(db, file, file_indices, data),
+        symbol,
+        name,
+        detail,
+        range: ide_range(db, file, range, range_cache)?,
+        full_range: ide_range(db, file, full_range, range_cache)?,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ide_location(
+    db: &ProjectDatabase,
+    file: File,
+    range: TextRange,
+    full_range: TextRange,
+    file_indices: &HashMap<File, usize>,
+    data: &[FileData],
+    range_cache: &mut IdeRangeCache,
+) -> Option<IdeLocationData> {
+    Some(IdeLocationData {
+        document: ide_document(db, file, file_indices, data),
+        range: ide_range(db, file, range, range_cache)?,
+        full_range: ide_range(db, file, full_range, range_cache)?,
+    })
+}
+
+fn ide_document(
+    db: &ProjectDatabase,
+    file: File,
+    file_indices: &HashMap<File, usize>,
+    data: &[FileData],
+) -> String {
+    file_indices.get(&file).map_or_else(
+        || file.path(db).to_string(),
+        |index| data[*index].relative_path.clone(),
+    )
+}
+
+fn ide_range(
+    db: &ProjectDatabase,
+    file: File,
+    range: TextRange,
+    cache: &mut IdeRangeCache,
+) -> Option<Vec<i32>> {
+    if let Entry::Vacant(entry) = cache.entry(file) {
+        let source = source_text(db, file);
+        if source.read_error().is_some() {
+            return None;
+        }
+        let source = source.as_str().to_owned();
+        let line_index = LineIndex::from_source_text(&source);
+        entry.insert((source, line_index));
+    }
+    let (source, line_index) = cache.get(&file)?;
+    let start = line_index.source_location(range.start(), source, RuffPositionEncoding::Utf8);
+    let end = line_index.source_location(range.end(), source, RuffPositionEncoding::Utf8);
+    let start_line = start.line.to_zero_indexed() as i32;
+    let start_character = start.character_offset.to_zero_indexed() as i32;
+    let end_line = end.line.to_zero_indexed() as i32;
+    let end_character = end.character_offset.to_zero_indexed() as i32;
+    Some(if start_line == end_line {
+        vec![start_line, start_character, end_character]
+    } else {
+        vec![start_line, start_character, end_line, end_character]
+    })
+}
+
+fn ide_target_symbol(
+    db: &ProjectDatabase,
+    file: File,
+    range: TextRange,
+    file_indices: &HashMap<File, usize>,
+    data: &[FileData],
+    external_symbols: &mut HashMap<File, HashMap<TextRange, SymbolData>>,
+) -> Option<String> {
+    if let Some(file_index) = file_indices.get(&file) {
+        let range = data[*file_index]
+            .canonical_definition_ranges
+            .get(&range)
+            .copied()
+            .unwrap_or(range);
+        data[*file_index]
+            .globals
+            .get(&range)
+            .or_else(|| data[*file_index].locals.get(&range))
+            .map(|symbol| symbol.symbol.clone())
+    } else {
+        external_symbol(db, file, range, external_symbols).map(|symbol| symbol.symbol)
+    }
 }
 
 fn collect_relationships(

@@ -1,8 +1,8 @@
 //! Bounded, offline LSP-style queries over an in-memory SCIP index.
 //!
 //! [`QueryIndex`] retains the decoded [`scip::types::Index`] as its source of
-//! truth. References remain SCIP references; calls are exposed only when a
-//! fingerprint-matched producer sidecar supplies resolved callee positions.
+//! truth. A fingerprint-matched producer sidecar can override navigation with
+//! the exact results returned by ty's IDE layer when the index was built.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
@@ -298,14 +298,52 @@ pub struct ReferenceView {
     pub evidence: ReferenceEvidence,
 }
 
-/// A resolved reference proven by the producer to occupy a call's callee.
+/// One location returned by ty's IDE layer.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-pub struct CallView {
-    pub caller: SymbolId,
-    pub callee: SymbolId,
+pub struct IdeLocationView {
     pub document: String,
     pub range: SourceRange,
-    pub provenance: &'static str,
+    pub full_range: SourceRange,
+}
+
+/// One reference returned by `ty_ide::find_references`.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct IdeReferenceView {
+    pub document: String,
+    pub range: SourceRange,
+    pub reference_kind: String,
+}
+
+/// A call- or type-hierarchy item returned by ty.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct IdeItemView {
+    pub document: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<SymbolId>,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub range: SourceRange,
+    pub full_range: SourceRange,
+}
+
+/// One grouped incoming or outgoing call returned by ty.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct IdeCallView {
+    pub item: IdeItemView,
+    pub from_document: String,
+    pub from_ranges: Vec<SourceRange>,
+}
+
+#[derive(Clone, Debug)]
+struct IdeSymbolFacts {
+    definitions: Vec<IdeLocationView>,
+    hover: Option<String>,
+    references: Vec<IdeReferenceView>,
+    incoming_calls: Vec<IdeCallView>,
+    outgoing_calls: Vec<IdeCallView>,
+    supertypes: Vec<IdeItemView>,
+    subtypes: Vec<IdeItemView>,
 }
 
 /// A direct lexical member and the ownership evidence that produced it.
@@ -380,16 +418,51 @@ struct TyFacts {
     format: String,
     version: u32,
     index_sha256: String,
-    facts: Vec<TyFact>,
+    symbols: Vec<RawIdeSymbol>,
 }
 
 #[derive(Deserialize)]
-struct TyFact {
-    kind: String,
+struct RawIdeLocation {
     document: String,
     range: Vec<i32>,
-    enclosing_symbol: String,
+    full_range: Vec<i32>,
+}
+
+#[derive(Deserialize)]
+struct RawIdeReference {
+    document: String,
+    range: Vec<i32>,
+    reference_kind: String,
+}
+
+#[derive(Deserialize)]
+struct RawIdeItem {
+    document: String,
+    symbol: Option<String>,
+    name: String,
+    detail: Option<String>,
+    range: Vec<i32>,
+    full_range: Vec<i32>,
+}
+
+#[derive(Deserialize)]
+struct RawIdeCall {
+    item: RawIdeItem,
+    from_ranges: Vec<Vec<i32>>,
+}
+
+#[derive(Deserialize)]
+struct RawIdeSymbol {
+    document: String,
     symbol: String,
+    item: RawIdeItem,
+    definitions: Vec<RawIdeLocation>,
+    hover: Option<String>,
+    references: Vec<RawIdeReference>,
+    incoming_calls: Vec<RawIdeCall>,
+    outgoing_calls: Vec<RawIdeCall>,
+    supertypes: Vec<RawIdeItem>,
+    subtypes: Vec<RawIdeItem>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -416,10 +489,8 @@ pub struct QueryIndex {
     relationships: Vec<RelationshipView>,
     outgoing: BTreeMap<SymbolId, Vec<ReferenceView>>,
     incoming: BTreeMap<SymbolId, Vec<ReferenceView>>,
-    calls: Vec<CallView>,
-    outgoing_calls: BTreeMap<SymbolId, Vec<CallView>>,
-    incoming_calls: BTreeMap<SymbolId, Vec<CallView>>,
-    call_facts_loaded: bool,
+    ide: BTreeMap<SymbolId, IdeSymbolFacts>,
+    ide_facts_loaded: bool,
 }
 
 impl QueryIndex {
@@ -465,10 +536,8 @@ impl QueryIndex {
             relationships: Vec::new(),
             outgoing: BTreeMap::new(),
             incoming: BTreeMap::new(),
-            calls: Vec::new(),
-            outgoing_calls: BTreeMap::new(),
-            incoming_calls: BTreeMap::new(),
-            call_facts_loaded: false,
+            ide: BTreeMap::new(),
+            ide_facts_loaded: false,
         };
         this.build();
         Ok(this)
@@ -749,6 +818,13 @@ impl QueryIndex {
         Page::new(items, limit)
     }
 
+    /// Definition targets captured directly from `ty_ide::goto_definition`.
+    pub fn ide_definitions(&self, id: &SymbolId, limit: usize) -> Option<Page<IdeLocationView>> {
+        self.ide
+            .get(id)
+            .map(|facts| Page::new(facts.definitions.clone(), limit))
+    }
+
     /// Documentation retained for an LSP-style hover response.
     pub fn documentation(&self, id: &SymbolId) -> Vec<String> {
         self.symbols
@@ -763,6 +839,18 @@ impl QueryIndex {
             .get(id)
             .map(|data| data.signatures.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// Hover text rendered by ty's IDE layer when the index was built.
+    pub fn ide_hover(&self, id: &SymbolId) -> Option<&str> {
+        self.ide.get(id)?.hover.as_deref()
+    }
+
+    /// References captured directly from `ty_ide::find_references`.
+    pub fn ide_references(&self, id: &SymbolId, limit: usize) -> Option<Page<IdeReferenceView>> {
+        self.ide
+            .get(id)
+            .map(|facts| Page::new(facts.references.clone(), limit))
     }
 
     /// Semantic reference evidence. Plain occurrences are deliberately never
@@ -829,26 +917,46 @@ impl QueryIndex {
         )
     }
 
-    /// Direct calls made by `id`, backed only by synchronized producer facts.
-    pub fn callees(&self, id: &SymbolId, limit: usize) -> Result<Page<CallView>, QueryError> {
-        self.require_call_facts()?;
+    /// Direct calls made by `id`, captured from `ty_ide::outgoing_calls`.
+    pub fn callees(&self, id: &SymbolId, limit: usize) -> Result<Page<IdeCallView>, QueryError> {
+        self.require_ide_facts()?;
         Ok(Page::new(
-            self.outgoing_calls.get(id).cloned().unwrap_or_default(),
+            self.ide
+                .get(id)
+                .map(|facts| facts.outgoing_calls.clone())
+                .unwrap_or_default(),
             limit,
         ))
     }
 
-    /// Direct calls to `id`, backed only by synchronized producer facts.
-    pub fn callers(&self, id: &SymbolId, limit: usize) -> Result<Page<CallView>, QueryError> {
-        self.require_call_facts()?;
+    /// Direct calls to `id`, captured from `ty_ide::incoming_calls`.
+    pub fn callers(&self, id: &SymbolId, limit: usize) -> Result<Page<IdeCallView>, QueryError> {
+        self.require_ide_facts()?;
         Ok(Page::new(
-            self.incoming_calls.get(id).cloned().unwrap_or_default(),
+            self.ide
+                .get(id)
+                .map(|facts| facts.incoming_calls.clone())
+                .unwrap_or_default(),
             limit,
         ))
     }
 
-    fn require_call_facts(&self) -> Result<(), QueryError> {
-        self.call_facts_loaded
+    /// Supertypes captured directly from ty's type-hierarchy implementation.
+    pub fn ide_supertypes(&self, id: &SymbolId, limit: usize) -> Option<Page<IdeItemView>> {
+        self.ide
+            .get(id)
+            .map(|facts| Page::new(facts.supertypes.clone(), limit))
+    }
+
+    /// Subtypes captured directly from ty's type-hierarchy implementation.
+    pub fn ide_subtypes(&self, id: &SymbolId, limit: usize) -> Option<Page<IdeItemView>> {
+        self.ide
+            .get(id)
+            .map(|facts| Page::new(facts.subtypes.clone(), limit))
+    }
+
+    fn require_ide_facts(&self) -> Result<(), QueryError> {
+        self.ide_facts_loaded
             .then_some(())
             .ok_or(QueryError::MissingCallFacts)
     }
@@ -861,7 +969,7 @@ impl QueryIndex {
                 sidecar.format
             )));
         }
-        if sidecar.version != 1 {
+        if sidecar.version != 2 {
             return Err(QueryError::InvalidFacts(format!(
                 "unsupported version {}",
                 sidecar.version
@@ -872,60 +980,51 @@ impl QueryIndex {
                 "sidecar fingerprint does not match the SCIP index".to_owned(),
             ));
         }
-        for fact in sidecar.facts {
-            if fact.kind != "callee_position" {
+        for raw in sidecar.symbols {
+            let id = SymbolId::new(&raw.document, &raw.symbol);
+            if !self.symbols.contains_key(&id) {
                 return Err(QueryError::InvalidFacts(format!(
-                    "unsupported fact kind {:?}",
-                    fact.kind
+                    "unknown subject symbol {id}"
                 )));
             }
-            let range = SourceRange::parse(&fact.range).ok_or_else(|| {
-                QueryError::InvalidFacts(format!("invalid range {:?}", fact.range))
-            })?;
-            let caller = SymbolId::new(&fact.document, fact.enclosing_symbol);
-            let callee = SymbolId::new(&fact.document, fact.symbol);
-            if !self.symbols.contains_key(&caller) {
-                return Err(QueryError::InvalidFacts(format!(
-                    "unknown enclosing symbol {caller}"
-                )));
-            }
-            if !self.symbols.contains_key(&callee) {
-                return Err(QueryError::InvalidFacts(format!(
-                    "unknown target symbol {callee}"
-                )));
-            }
-            let occurrence_exists = self.occurrences.iter().any(|occurrence| {
-                occurrence.document == fact.document
-                    && occurrence.range == Some(range)
-                    && occurrence.symbol.as_ref() == Some(&callee)
-            });
-            if !occurrence_exists {
-                return Err(QueryError::InvalidFacts(format!(
-                    "callee occurrence is absent at {}:{:?}",
-                    fact.document, fact.range
-                )));
-            }
-            self.calls.push(CallView {
-                caller,
-                callee,
-                document: fact.document,
-                range,
-                provenance: "ty_scip_callee_position",
-            });
+            let item = decode_ide_item(raw.item)?;
+            let from_document = item.document.clone();
+            let facts = IdeSymbolFacts {
+                definitions: raw
+                    .definitions
+                    .into_iter()
+                    .map(decode_ide_location)
+                    .collect::<Result<_, _>>()?,
+                hover: raw.hover,
+                references: raw
+                    .references
+                    .into_iter()
+                    .map(decode_ide_reference)
+                    .collect::<Result<_, _>>()?,
+                incoming_calls: raw
+                    .incoming_calls
+                    .into_iter()
+                    .map(|call| decode_ide_call(call, None))
+                    .collect::<Result<_, _>>()?,
+                outgoing_calls: raw
+                    .outgoing_calls
+                    .into_iter()
+                    .map(|call| decode_ide_call(call, Some(&from_document)))
+                    .collect::<Result<_, _>>()?,
+                supertypes: raw
+                    .supertypes
+                    .into_iter()
+                    .map(decode_ide_item)
+                    .collect::<Result<_, _>>()?,
+                subtypes: raw
+                    .subtypes
+                    .into_iter()
+                    .map(decode_ide_item)
+                    .collect::<Result<_, _>>()?,
+            };
+            self.ide.insert(id, facts);
         }
-        self.calls.sort();
-        self.calls.dedup();
-        for call in &self.calls {
-            self.outgoing_calls
-                .entry(call.caller.clone())
-                .or_default()
-                .push(call.clone());
-            self.incoming_calls
-                .entry(call.callee.clone())
-                .or_default()
-                .push(call.clone());
-        }
-        self.call_facts_loaded = true;
+        self.ide_facts_loaded = true;
         Ok(())
     }
 
@@ -1333,6 +1432,61 @@ fn absorb_info(
             }),
         relationship_count: info.relationships.len(),
     });
+}
+
+fn fact_range(values: Vec<i32>) -> Result<SourceRange, QueryError> {
+    SourceRange::parse(&values)
+        .ok_or_else(|| QueryError::InvalidFacts(format!("invalid range {values:?}")))
+}
+
+fn decode_ide_location(raw: RawIdeLocation) -> Result<IdeLocationView, QueryError> {
+    Ok(IdeLocationView {
+        document: raw.document,
+        range: fact_range(raw.range)?,
+        full_range: fact_range(raw.full_range)?,
+    })
+}
+
+fn decode_ide_reference(raw: RawIdeReference) -> Result<IdeReferenceView, QueryError> {
+    Ok(IdeReferenceView {
+        document: raw.document,
+        range: fact_range(raw.range)?,
+        reference_kind: raw.reference_kind,
+    })
+}
+
+fn decode_ide_item(raw: RawIdeItem) -> Result<IdeItemView, QueryError> {
+    let symbol = raw
+        .symbol
+        .map(|symbol| SymbolId::new(&raw.document, symbol));
+    Ok(IdeItemView {
+        document: raw.document,
+        symbol,
+        name: raw.name,
+        detail: raw.detail,
+        range: fact_range(raw.range)?,
+        full_range: fact_range(raw.full_range)?,
+    })
+}
+
+fn decode_ide_call(
+    raw: RawIdeCall,
+    from_document: Option<&str>,
+) -> Result<IdeCallView, QueryError> {
+    let item = decode_ide_item(raw.item)?;
+    let from_document = from_document.unwrap_or(&item.document).to_owned();
+    let mut from_ranges = raw
+        .from_ranges
+        .into_iter()
+        .map(fact_range)
+        .collect::<Result<Vec<_>, _>>()?;
+    from_ranges.sort();
+    from_ranges.dedup();
+    Ok(IdeCallView {
+        item,
+        from_document,
+        from_ranges,
+    })
 }
 
 fn normalized_range(

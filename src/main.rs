@@ -166,7 +166,13 @@ fn run() -> Result<(), String> {
         return Err("--facts must not overwrite the SCIP index".to_owned());
     }
 
-    let index = ty_index::index(root, sample_limit, project_name, project_version)?;
+    let index = ty_index::index(
+        root,
+        sample_limit,
+        project_name,
+        project_version,
+        facts_output.is_some(),
+    )?;
     if !quiet {
         for sample in &index.samples {
             eprintln!("{sample}");
@@ -211,6 +217,7 @@ fn run() -> Result<(), String> {
         facts_output.as_deref(),
         &index.files,
         &index.edges,
+        &index.ide_symbols,
     )
     .map_err(|error| format!("cannot write SCIP index {}: {error}", output.display()))?;
     if !quiet {
