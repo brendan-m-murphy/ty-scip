@@ -396,7 +396,8 @@ fn execute(cli: Cli) -> Result<u8, String> {
         limit,
     } = &cli.command
     {
-        let sql = SqlDatabase::open(database).map_err(|error| error.to_string())?;
+        let sql = SqlDatabase::open_with_root(database, cli.root.clone())
+            .map_err(|error| error.to_string())?;
         if *group_files {
             let (resolved, result) = match sql.test_files(selector, path, *depth, *offset, *limit) {
                 Ok(result) => result,

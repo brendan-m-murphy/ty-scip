@@ -1393,7 +1393,7 @@ fn encoded_column(
     )
 }
 
-fn safe_source_path(root: &Path, relative: &str) -> Result<PathBuf, QueryError> {
+pub(crate) fn safe_source_path(root: &Path, relative: &str) -> Result<PathBuf, QueryError> {
     let relative_path = Path::new(relative);
     if relative_path.is_absolute()
         || relative_path

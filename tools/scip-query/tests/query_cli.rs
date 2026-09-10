@@ -18,6 +18,7 @@ const BASE: &str = "example package demo 1.0 pkg/Base#";
 const HELPER: &str = "example package demo 1.0 pkg/helper().";
 const LEAF: &str = "example package demo 1.0 pkg/leaf().";
 const TEST_ALPHA: &str = "example package demo 1.0 tests/TestAlpha#";
+const TEST_LEAF: &str = "example package demo 1.0 tests/test_leaf().";
 
 static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
 
@@ -247,7 +248,17 @@ fn synthetic_index() -> Index {
             },
             Document {
                 relative_path: "tests/test_leaf.py".into(),
-                occurrences: vec![reference(LEAF, &[3, 11, 15], SymbolRole::ReadAccess as i32)],
+                text: "from pkg.leaf import leaf\n\ndef test_leaf():\n    assert leaf() == 1\n"
+                    .into(),
+                symbols: vec![info(
+                    TEST_LEAF,
+                    "test_leaf",
+                    symbol_information::Kind::Function,
+                )],
+                occurrences: vec![
+                    definition(TEST_LEAF, &[2, 4, 13], &[2, 0, 4, 0]),
+                    reference(LEAF, &[3, 11, 15], SymbolRole::ReadAccess as i32),
+                ],
                 ..Default::default()
             },
         ],
@@ -497,7 +508,7 @@ fn sqlite_cache_preserves_facts_and_groups_reference_occurrences() {
 
     let built = fixture.success(&["build-db", database_text]);
     assert_eq!(built["result"]["documents"], 7);
-    assert_eq!(built["result"]["occurrences"], 24);
+    assert_eq!(built["result"]["occurrences"], 25);
     assert_eq!(built["result"]["relationships"], 2);
 
     let stats = fixture.success(&["sql-stats", database_text]);
@@ -627,6 +638,11 @@ fn sqlite_resolves_import_aliases_and_projects_tests() {
         .find(|item| item["document"] == "tests/test_leaf.py")
         .unwrap();
     assert_eq!(leaf["depth"], 2);
+    assert_eq!(leaf["relevance"], "downstream_contract");
+    assert_eq!(leaf["test_symbol"], "tests.test_leaf");
+    assert_eq!(leaf["snippet"], "assert leaf() == 1");
+    assert_eq!(leaf["terminal_symbol"], "pkg.leaf");
+    assert_eq!(leaf["follow_up_selectors"], serde_json::json!(["pkg.leaf"]));
     assert_eq!(
         leaf["path"],
         serde_json::json!(["pkg.Alpha.run", "pkg.helper", "pkg.leaf"])

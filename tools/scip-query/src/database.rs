@@ -3,14 +3,15 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use protobuf::Message;
 use rusqlite::{Connection, OpenFlags, params};
 use scip::types::{SymbolRole, symbol_information};
 use serde::Serialize;
 
-use super::{QueryIndex, RefDirection, SourceRange, SymbolId};
+use super::{QueryIndex, RefDirection, SourceRange, SymbolId, safe_source_path};
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -195,6 +196,10 @@ pub struct SqlTestSummary {
     pub occurrences: usize,
     pub depth: usize,
     pub path: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test_symbol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -216,6 +221,13 @@ pub struct SqlTestFileSummary {
     pub column: Option<i64>,
     pub representative_target: String,
     pub representative_match_kind: String,
+    pub relevance: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test_symbol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+    pub terminal_symbol: String,
+    pub follow_up_selectors: Vec<String>,
     pub matched_symbols: usize,
     pub occurrences: usize,
 }
@@ -416,6 +428,7 @@ impl QueryIndex {
 
 pub struct SqlDatabase {
     connection: Connection,
+    root: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -448,6 +461,7 @@ struct TestKey {
     target: String,
     match_kind: String,
     roles_json: String,
+    test_symbol: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -464,15 +478,20 @@ struct TestGroup {
     count: usize,
     depth: usize,
     path: Vec<String>,
+    snippet: Option<String>,
 }
 
 impl SqlDatabase {
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_root(path, None)
+    }
+
+    pub fn open_with_root(path: &Path, root: Option<PathBuf>) -> Result<Self> {
         let connection = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        Ok(Self { connection })
+        Ok(Self { connection, root })
     }
 
     pub fn stats(&self) -> Result<DatabaseStats> {
@@ -581,10 +600,12 @@ impl SqlDatabase {
         }
 
         let mut query = self.connection.prepare(
-            "SELECT d.path,o.start_line,o.start_character,o.role_names_json,s.qualified_name
+            "SELECT d.path,o.start_line,o.start_character,o.role_names_json,s.qualified_name,
+                    owner.qualified_name,d.text
              FROM occurrences o
              JOIN documents d ON d.id=o.document_id
              JOIN symbols s ON s.id=o.symbol_id
+             LEFT JOIN symbols owner ON owner.id=o.owner_symbol_id
              WHERE o.symbol_id=? AND d.path LIKE ? || '%'",
         )?;
         let mut groups = BTreeMap::<TestKey, TestGroup>::new();
@@ -596,15 +617,19 @@ impl SqlDatabase {
                     row.get::<_, Option<i64>>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             })?;
             for row in rows {
-                let (document, line, column, roles_json, target) = row?;
+                let (document, line, column, roles_json, target, test_symbol, text) = row?;
+                let snippet = self.source_line(&document, &text, line);
                 let key = TestKey {
                     document,
                     target,
                     match_kind: projection.match_kind.to_owned(),
                     roles_json,
+                    test_symbol,
                 };
                 let group = groups.entry(key).or_insert(TestGroup {
                     line,
@@ -612,9 +637,14 @@ impl SqlDatabase {
                     count: 0,
                     depth: projection.depth,
                     path: projection.path.clone(),
+                    snippet: snippet.clone(),
                 });
-                group.line = group.line.min(line).or(group.line).or(line);
-                group.column = group.column.min(column).or(group.column).or(column);
+                let earlier = line.is_some() && (group.line.is_none() || line < group.line);
+                if earlier {
+                    group.line = line;
+                    group.column = column;
+                    group.snippet = snippet;
+                }
                 group.count += 1;
             }
         }
@@ -631,6 +661,8 @@ impl SqlDatabase {
                 occurrences: group.count,
                 depth: group.depth,
                 path: group.path,
+                test_symbol: key.test_symbol,
+                snippet: group.snippet,
             })
             .collect();
         items.sort_by(|left, right| {
@@ -674,12 +706,20 @@ impl SqlDatabase {
         let mut items = Vec::new();
         for (document, mut rows) in groups {
             rows.sort_by(|left, right| {
-                (left.depth, &left.target, &left.match_kind, left.line).cmp(&(
-                    right.depth,
-                    &right.target,
-                    &right.match_kind,
-                    right.line,
-                ))
+                (
+                    !is_behavioral_test(left),
+                    left.depth,
+                    match_rank(&left.match_kind),
+                    &left.target,
+                    left.line,
+                )
+                    .cmp(&(
+                        !is_behavioral_test(right),
+                        right.depth,
+                        match_rank(&right.match_kind),
+                        &right.target,
+                        right.line,
+                    ))
             });
             let representative = &rows[0];
             let matched_symbols = rows
@@ -695,6 +735,26 @@ impl SqlDatabase {
                 column: representative.column,
                 representative_target: representative.target.clone(),
                 representative_match_kind: representative.match_kind.clone(),
+                relevance: if is_behavioral_test(representative) {
+                    if representative.depth == 0 && representative.match_kind == "symbol" {
+                        "direct"
+                    } else {
+                        "downstream_contract"
+                    }
+                } else {
+                    "incidental"
+                }
+                .to_owned(),
+                test_symbol: representative.test_symbol.clone(),
+                snippet: representative.snippet.clone(),
+                terminal_symbol: representative.path.last().cloned().unwrap_or_default(),
+                follow_up_selectors: BTreeSet::from([
+                    representative.path.last().cloned().unwrap_or_default(),
+                    representative.target.clone(),
+                ])
+                .into_iter()
+                .filter(|selector| !selector.is_empty())
+                .collect(),
                 matched_symbols,
                 occurrences: rows.iter().map(|row| row.occurrences).sum(),
             });
@@ -717,6 +777,19 @@ impl SqlDatabase {
                 items,
             },
         ))
+    }
+
+    fn source_line(
+        &self,
+        document: &str,
+        embedded_text: &str,
+        line: Option<i64>,
+    ) -> Option<String> {
+        source_line(embedded_text, line).or_else(|| {
+            let root = self.root.as_deref()?;
+            let path = safe_source_path(root, document).ok()?;
+            source_line(&fs::read_to_string(path).ok()?, line)
+        })
     }
 
     fn add_test_projection(
@@ -1085,6 +1158,35 @@ fn insert_projection(
             },
         );
     }
+}
+
+fn is_behavioral_test(item: &SqlTestSummary) -> bool {
+    item.test_symbol
+        .as_deref()
+        .and_then(|symbol| symbol.rsplit('.').next())
+        .is_some_and(|name| name.starts_with("test_"))
+        && item
+            .roles
+            .iter()
+            .any(|role| matches!(role.as_str(), "read" | "write" | "definition"))
+}
+
+fn match_rank(kind: &str) -> usize {
+    match kind {
+        "symbol" => 0,
+        "owner" => 1,
+        "member" => 2,
+        "subtype" => 3,
+        _ => 4,
+    }
+}
+
+fn source_line(text: &str, line: Option<i64>) -> Option<String> {
+    line.and_then(|line| usize::try_from(line).ok())
+        .and_then(|line| text.lines().nth(line))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
 }
 
 fn range_columns(
