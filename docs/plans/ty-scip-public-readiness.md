@@ -1,6 +1,6 @@
 # ty-scip public-readiness plan
 
-Status: **Release candidate proved; PyPI trusted publisher and v0.1.0 tag next**
+Status: **v0.1.0 released; public-readiness gates complete**
 Started: 2026-09-08
 
 ## Goal
@@ -121,17 +121,23 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Configure the PyPI pending trusted publisher, merge the release-facing README,
-then tag and verify v0.1.0. The five-wheel hosted matrix, per-wheel installed
-determinism tests, packaged Linux OpenGHG differential, `scip-cli` consumer
-gate, checksums, dotted-import correction, bounded `scip-python`-style CLI,
-PEP 639 metadata, and reviewed locked notice bundle are complete.
-Installed-package ownership, complete project-walk diagnostics, and
-method-override relationships stay upstream API requests. The remaining 39
-first-party ambiguities stay unresolved until a typed bulk occurrence API can
-remove constructor/`__call__` expansion without a first-target heuristic.
+The v0.1.0 release is published and verified. Prepare the narrow Astral API
+requests recorded in `docs/upstream-ty-api-requests.md`, backed by the released
+implementation and its measured omissions. Installed-package ownership remains
+tracked in issue #6. Complete project-walk diagnostics and method-override
+relationships stay upstream API requests. The remaining 39 first-party
+ambiguities stay unresolved until a typed bulk occurrence API can remove
+constructor/`__call__` expansion without a first-target heuristic.
 
 ## Progress log
+
+- **2026-09-11:** Released 0.1.0 through PyPI Trusted Publishing and published
+  the matching GitHub release with five wheels and `SHA256SUMS`. All PyPI
+  digests match the GitHub manifest. Clean `uvx`, `uv tool`, `pip`, and `pipx`
+  installs report 0.1.0, and an independent repeated-index check produced
+  byte-identical files. The tag workflow's only failure was the final missing
+  `GH_TOKEN`; the release was recovered from the original artifacts and PR #15
+  permanently corrected the workflow.
 
 - **2026-09-11:** Passed the hosted v0.1.0 release-candidate workflow. Five
   Linux, macOS, and Windows wheels installed and indexed a cross-module fixture

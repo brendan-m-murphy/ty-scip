@@ -1,6 +1,6 @@
 # ty-scip distribution plan
 
-Status: **Release candidate proved; PyPI trusted publisher and v0.1.0 tag next**
+Status: **v0.1.0 released on PyPI and GitHub**
 Started: 2026-09-09
 
 ## Goal
@@ -26,10 +26,9 @@ PyPI distribution, and SCIP symbol scheme.
 - Do not install a compatibility executable named `scip-python`; it would
   collide with the Sourcegraph tool and imply the wrong provenance.
 
-As of 2026-09-09, exact registry checks found `ty-scip` unclaimed on PyPI,
-crates.io, unscoped npm, and GitHub. Availability is not reserved until the
-projects are created. `python-scip-indexer` is the vendor-neutral fallback if
-the use of `ty` becomes undesirable.
+`ty-scip` 0.1.0 is published on PyPI and GitHub. The Cargo package remains
+unpublished. `python-scip-indexer` is the vendor-neutral fallback if the use
+of `ty` becomes undesirable.
 
 ## Packaging decision
 
@@ -154,13 +153,14 @@ Before the first binary preview:
   configuration differences, and option mapping.
 - A generated, reviewed binary notice bundle before artifacts are published.
 
-## Immediate sequence
+## Completed release sequence
 
-1. Configure the `ty-scip` pending trusted publisher on PyPI.
-2. Merge the README status and install commands proved by the candidate run.
-3. Tag `v0.1.0`; let the same workflow rebuild, revalidate, and publish the
-   wheels and checksums to PyPI and GitHub.
-4. Verify installation from PyPI in a clean environment and close issue #7.
+1. Configured the `ty-scip` pending trusted publisher on PyPI.
+2. Merged the README status and install commands proved by the candidate run.
+3. Tagged `v0.1.0`; the workflow rebuilt, revalidated, and published the five
+   wheels through PyPI Trusted Publishing.
+4. Published the same wheels and checksums in the GitHub release, verified all
+   documented clean-install paths, and closed issue #7.
 
 Create the public remote from the repository root with:
 
@@ -178,6 +178,14 @@ history already contains those files, and `--source=.` plus `--push` publishes
 that history without generating a conflicting initial commit.
 
 ## Implementation results
+
+- **2026-09-11:** Published `ty-scip` 0.1.0 on PyPI and the matching GitHub
+  release. The tag workflow passed all five wheel builds, the frozen OpenGHG
+  gate, checksum generation, and OIDC publication. The final GitHub-release
+  job exposed a missing `GH_TOKEN`; the release was recovered from the
+  original workflow artifacts and PR #15 permanently fixed the environment.
+  All five PyPI digests match `SHA256SUMS`; clean `uvx`, `uv tool`, `pip`, and
+  `pipx` installs report 0.1.0, and two independent indexes were byte-identical.
 
 - **2026-09-11:** The hosted release candidate built and validated five native
   wheels: manylinux 2.17 x86-64 and ARM64, macOS x86-64 and ARM64, and Windows
