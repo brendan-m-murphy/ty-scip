@@ -2,7 +2,7 @@
 
 **A fast SCIP indexer for Python, powered by ty.**
 
-`ty-scip` is an experimental SCIP indexer for Python. It turns ty's Python
+`ty-scip` is a preview SCIP indexer for Python. It turns ty's Python
 project model and semantic navigation results into a deterministic index that
 is tested with SCIP 0.10 and the SCIP 0.8-based `scip-cli` 2.7 conversion path.
 
@@ -16,17 +16,38 @@ not an LSP client.
 
 ## Status
 
-This is pre-release software. It already indexes useful first-party structure,
-but it is not yet a drop-in replacement for `scip-python`. The pinned ty/Ruff
-crates are unpublished internal crates without an API-stability promise, and
-the `ty-scip` symbol scheme may still change.
+Version 0.1.0 is preview software. It indexes useful first-party structure and
+supports the common `scip-python` command shape, but it is not a drop-in
+replacement. The pinned ty/Ruff crates are unpublished internal crates without
+an API-stability promise, and the `ty-scip` symbol scheme may still change.
 
-The project is MIT licensed. There is no supported binary or crates.io
-distribution yet; the pinned ty/Ruff crates are unpublished, so build the
-current GitHub checkout to evaluate it. Binary packages include the project
-license and the generated [third-party notices](THIRD_PARTY_NOTICES).
+The project is MIT licensed. Version 0.1.0 provides binary wheels for Linux
+x86-64 and ARM64 (glibc 2.17 or newer), macOS x86-64 and ARM64, and Windows
+x86-64. There is no source distribution or crates.io package. Binary packages
+include the project license and the generated
+[third-party notices](THIRD_PARTY_NOTICES).
 
-## Build
+## Install
+
+Run without keeping an installation:
+
+```console
+uvx ty-scip index . --output index.scip
+```
+
+Or install the `ty-scip` executable with one of:
+
+```console
+uv tool install ty-scip
+pipx install ty-scip
+python -m pip install ty-scip
+```
+
+The wheel contains a native executable, not an importable Python API. The
+installer's Python environment is independent of the Python environment that
+ty selects for the indexed project.
+
+## Build from source
 
 The crate declares Rust 1.96 and is currently exercised with Rust 1.98.1.
 Building needs Git access to fetch the pinned Ruff revision.
@@ -142,12 +163,14 @@ larger OpenGHG index; every reported target has symbol information and a
 definition occurrence, and the error set changes between runs of identical
 bytes.
 
-On the frozen 281-document OpenGHG checkout, repeated release-mode runs with
-the same project produced byte-identical indexes, including when written to
-different output paths. The latest index converted to 542 chunks and 20,303
-mentions and passed the isolated `scip-cli` search, code, members, references,
-dependencies, and reverse-dependencies gate. Index replacement uses an
-exclusively created sibling temporary file followed by an atomic rename. Two
+The version 0.1.0 release gate indexed all 281 documents in the frozen OpenGHG
+checkout with 22,975 definitions and 53,264 references, and repeated candidate
+runs produced byte-identical indexes. The converted index contained 542 chunks
+and 20,586 mentions and passed the isolated `scip-cli` search, code, members,
+references, dependencies, and reverse-dependencies gate. The locked comparison
+to the patched `scip-python` reference retains six reviewed source ranges where
+`ty-scip` omits a reference target. Index replacement uses an exclusively
+created sibling temporary file followed by an atomic rename. Two
 planning tasks produced accurate scopes and 24/24 valid cited locations, but
 the benchmarked arm did not beat built-in search: it used about 34% more total
 tokens, 6.5% more uncached input, and 2% more elapsed time. These results

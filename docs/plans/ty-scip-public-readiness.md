@@ -1,6 +1,6 @@
 # ty-scip public-readiness plan
 
-Status: **License and hosted platform gates proved; release-candidate gate next**
+Status: **Release candidate proved; PyPI trusted publisher and v0.1.0 tag next**
 Started: 2026-09-08
 
 ## Goal
@@ -121,19 +121,24 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Build and validate the hosted release-candidate wheel matrix, then publish the
-first PyPI/GitHub release. The frozen OpenGHG differential and consumer gate,
-dotted-import correction, bounded `scip-python`-style CLI, local Maturin
-binary-wheel smoke test, PEP 639 metadata, reviewed locked notice bundle, wheel
-artifact checks, and hosted Linux/macOS/Windows core gates are complete. PyPI
-publication still needs the hosted wheel matrix and its packaged-binary
-SCIP/OpenGHG gate.
+Configure the PyPI pending trusted publisher, merge the release-facing README,
+then tag and verify v0.1.0. The five-wheel hosted matrix, per-wheel installed
+determinism tests, packaged Linux OpenGHG differential, `scip-cli` consumer
+gate, checksums, dotted-import correction, bounded `scip-python`-style CLI,
+PEP 639 metadata, and reviewed locked notice bundle are complete.
 Installed-package ownership, complete project-walk diagnostics, and
 method-override relationships stay upstream API requests. The remaining 39
 first-party ambiguities stay unresolved until a typed bulk occurrence API can
 remove constructor/`__call__` expansion without a first-target heuristic.
 
 ## Progress log
+
+- **2026-09-11:** Passed the hosted v0.1.0 release-candidate workflow. Five
+  Linux, macOS, and Windows wheels installed and indexed a cross-module fixture
+  twice with byte-identical output. The packaged Linux x86-64 wheel passed the
+  complete frozen OpenGHG and `scip-cli` gate with the locked differential, and
+  the workflow generated checksums for all five artifacts. Manual dispatch
+  correctly skipped the PyPI and GitHub publication jobs.
 
 - **2026-09-11:** Made the frozen OpenGHG comparison an executable release
   gate. It clones exact source and reference revisions, requires byte-identical
