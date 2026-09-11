@@ -1,6 +1,6 @@
 # ty-scip public-readiness plan
 
-Status: **Public remote live; license/platform PR in hosted CI**
+Status: **License and hosted platform gates proved; release-candidate gate next**
 Started: 2026-09-08
 
 ## Goal
@@ -122,12 +122,12 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Finish the hosted Linux/macOS gates on the public GitHub remote. Keep Windows
-only if its remaining fixes stay small; it does not block the first preview.
-The dotted-import correction, bounded `scip-python`-style CLI,
-local Maturin binary-wheel smoke test, PEP 639 metadata, reviewed locked notice
-bundle, and wheel artifact checks are complete. PyPI publication still needs
-the hosted wheel/release matrix and release-candidate SCIP/OpenGHG gates.
+Make the frozen OpenGHG differential and SCIP consumer gate reproducible, then
+build and validate the hosted release-candidate wheel matrix. The dotted-import
+correction, bounded `scip-python`-style CLI, local Maturin binary-wheel smoke
+test, PEP 639 metadata, reviewed locked notice bundle, wheel artifact checks,
+and hosted Linux/macOS/Windows core gates are complete. PyPI publication still
+needs the hosted wheel matrix and release-candidate SCIP/OpenGHG gate.
 Installed-package ownership, complete project-walk diagnostics, and
 method-override relationships stay upstream API requests. The remaining 39
 first-party ambiguities stay unresolved until a typed bulk occurrence API can

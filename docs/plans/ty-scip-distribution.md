@@ -1,6 +1,6 @@
 # ty-scip distribution plan
 
-Status: **License-complete local wheel proved; hosted platform CI next**
+Status: **License and hosted platform gates proved; release-candidate gate next**
 Started: 2026-09-09
 
 ## Goal
@@ -154,11 +154,9 @@ Before the first binary preview:
 
 ## Immediate sequence
 
-1. Finish the hosted Linux/macOS gates. Keep Windows in the matrix only if the
-   remaining fixes stay small; otherwise defer it without blocking the preview.
-2. Make the frozen OpenGHG and SCIP consumer gate reproducible in issue #5.
-3. Build release-candidate wheels and archives in issue #7, without publishing.
-4. Update the README with only the install commands and platforms proved by
+1. Make the frozen OpenGHG and SCIP consumer gate reproducible in issue #5.
+2. Build release-candidate wheels in issue #7, without publishing.
+3. Update the README with only the install commands and platforms proved by
    those candidates, then publish after the artifact and OpenGHG gates pass.
 
 Create the public remote from the repository root with:
