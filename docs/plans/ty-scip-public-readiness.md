@@ -432,8 +432,9 @@ remove constructor/`__call__` expansion without a first-target heuristic.
   for the repository, Cargo package, executable, PyPI
   distribution, and symbol scheme, with an explicit independent-project
   disclaimer. Publish the existing Rust executable through Maturin `bin`
-  wheels; do not create a Python wrapper merely to reach PyPI. PyPI wheels and
-  matching GitHub archives are the first release channels; crates.io, npm,
+  wheels; do not create a Python wrapper merely to reach PyPI. The same wheels
+  and checksums on PyPI and GitHub are the first release artifacts; duplicate
+  binary archives, crates.io, npm,
   Homebrew, containers, and a Python API remain demand-driven follow-ups.
 - **2026-09-09:** Brendan Murphy accepted the `ty-scip` identity and staged
   distribution plan. Implementation started with the dotted-import correction,

@@ -96,10 +96,11 @@ Smallest credible wheel and GitHub-archive matrix:
 - Windows x86-64, only after Windows output-replacement tests pass.
 
 Each tagged build must install the wheel in a clean environment, run
-`ty-scip --version`, index a fixture twice with identical bytes, decode the
-index, and run the supported SCIP consumer gate. Matching GitHub archives must
-contain the same binary, `LICENSE`, reviewed third-party notices, and published
-SHA-256 checksums.
+`ty-scip --version`, and index a fixture twice with identical nonempty bytes.
+The canonical Linux x86-64 wheel must additionally pass decoded structural,
+OpenGHG differential, and SCIP consumer gates. Publish the same reviewed wheels
+on GitHub with SHA-256 checksums; do not create duplicate binary archives whose
+contents would need a second release gate.
 
 Publish wheels from a protected GitHub Actions environment using PyPI Trusted
 Publishing. Do not store a long-lived PyPI token.
@@ -129,8 +130,9 @@ Before the first binary preview:
    pass there.
 4. Generate and review a locked third-party notice bundle covering Ruff/ty,
    embedded typeshed data, and transitive binary dependencies.
-5. Build and install every wheel, then run deterministic fixture and SCIP
-   consumer checks against the installed executable.
+5. Build and install every wheel, run the deterministic fixture against each
+   installed executable, and run decoded SCIP consumer checks on the canonical
+   Linux x86-64 candidate.
 6. Run the frozen OpenGHG scale, structural-integrity, differential, and
    `scip-cli` query gates against the release candidate.
 7. Update the README's status and install commands from the exact supported
@@ -146,8 +148,8 @@ Before the first binary preview:
 - `src/main.rs` and `tests/cli.rs`: compatibility command and options.
 - `src/scip_emit.rs` and `tests/emission.rs`: Windows-safe replacement policy.
 - `.github/workflows/ci.yml`: platform smoke matrix.
-- `.github/workflows/release.yml`: tagged wheels, archives, checksums,
-  attestations, and Trusted Publishing.
+- `.github/workflows/release.yml`: tagged wheels, checksums, candidate gates,
+  and Trusted Publishing.
 - `README.md` and a migration document: install paths, independence statement,
   configuration differences, and option mapping.
 - A generated, reviewed binary notice bundle before artifacts are published.

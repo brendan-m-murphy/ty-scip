@@ -28,9 +28,7 @@ def inspect(wheel: Path) -> str:
     with ZipFile(wheel) as archive:
         names = archive.namelist()
         unsafe = [
-            name
-            for name in names
-            if PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts
+            name for name in names if PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts
         ]
         if unsafe:
             raise SystemExit(f"unsafe wheel members: {unsafe}")
@@ -40,8 +38,7 @@ def inspect(wheel: Path) -> str:
         binary = [
             name
             for name in names
-            if name.endswith(".data/scripts/ty-scip")
-            or name.endswith(".data/scripts/ty-scip.exe")
+            if name.endswith(".data/scripts/ty-scip") or name.endswith(".data/scripts/ty-scip.exe")
         ]
         if len(binary) != 1:
             raise SystemExit(f"expected one ty-scip executable, found {binary}")
@@ -91,9 +88,7 @@ def smoke_test(wheel: Path, version: str) -> None:
             ],
             check=True,
         )
-        executables = [
-            path for path in scripts.iterdir() if path.name in {"ty-scip", "ty-scip.exe"}
-        ]
+        executables = [path for path in scripts.iterdir() if path.name in {"ty-scip", "ty-scip.exe"}]
         if len(executables) != 1:
             raise SystemExit(f"expected one installed ty-scip executable, found {executables}")
         output = subprocess.run(
@@ -105,15 +100,44 @@ def smoke_test(wheel: Path, version: str) -> None:
         if output != f"ty-scip {version}":
             raise SystemExit(f"unexpected version output: {output!r}")
 
+        project = environment / "project"
+        project.mkdir()
+        (project / "pyproject.toml").write_text(
+            '[project]\nname = "wheel-smoke"\nversion = "0.0.0"\n',
+            encoding="utf-8",
+        )
+        (project / "library.py").write_text(
+            "def time_offset(period=None):\n    return period\n",
+            encoding="utf-8",
+        )
+        (project / "caller.py").write_text(
+            'from library import time_offset\n\ntime_offset(period="1h")\n',
+            encoding="utf-8",
+        )
+        indexes = [environment / "first.scip", environment / "second.scip"]
+        for index in indexes:
+            subprocess.run(
+                [executables[0], "index", project, "--output", index, "--quiet"],
+                check=True,
+            )
+        first = indexes[0].read_bytes()
+        if not first:
+            raise SystemExit("installed ty-scip produced an empty index")
+        if first != indexes[1].read_bytes():
+            raise SystemExit("installed ty-scip produced nondeterministic indexes")
+
 
 def main() -> None:
     """Parse arguments, validate the wheel, and run the smoke test."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", help="wheel path or a pattern matching exactly one wheel")
+    parser.add_argument("--platform-tag", help="required substring in the wheel filename")
     args = parser.parse_args()
-    wheels = [Path(path) for path in glob.glob(args.wheel)]
+    wheels = [Path(path) for path in glob.glob(args.wheel)]  # noqa: PTH207
     if len(wheels) != 1:
         raise SystemExit(f"expected one wheel, found {wheels}")
+    if args.platform_tag and args.platform_tag not in wheels[0].name:
+        raise SystemExit(f"wheel {wheels[0].name!r} lacks platform tag {args.platform_tag!r}")
     version = inspect(wheels[0])
     smoke_test(wheels[0], version)
     print(f"validated {wheels[0]}")
