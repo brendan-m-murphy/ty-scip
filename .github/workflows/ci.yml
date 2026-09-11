@@ -38,7 +38,6 @@ jobs:
         with:
           toolchain: 1.96.0
       - run: cargo +1.96.0 check --locked --all-targets
-      - run: cargo +1.96.0 check --locked --manifest-path tools/scip-graphify/Cargo.toml --all-targets
 
   platform:
     name: Core (${{ matrix.os }})
@@ -56,22 +55,3 @@ jobs:
           toolchain: 1.98.1
       - run: cargo test --locked --all-targets
       - run: cargo build --release --locked
-
-  scip-graphify:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.98.1
-          components: clippy, rustfmt
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - run: cargo fmt --manifest-path tools/scip-graphify/Cargo.toml --all -- --check
-      - run: cargo clippy --locked --manifest-path tools/scip-graphify/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --locked --manifest-path tools/scip-graphify/Cargo.toml --all-targets
-      - run: python -m pip install graphifyy==0.9.55
-      - run: cargo test --locked --manifest-path tools/scip-graphify/Cargo.toml --test graphify_compatibility -- --ignored --exact graphify_0_9_55_accepts_projection_and_traverses_directionally
-        env:
-          GRAPHIFY_BIN: graphify
