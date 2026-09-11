@@ -155,3 +155,5 @@ jobs:
         with:
           name: checksums
       - run: gh release create "$GITHUB_REF_NAME" dist/*.whl SHA256SUMS --verify-tag --title "$GITHUB_REF_NAME" --notes-file docs/releases/v0.1.0.md
+        env:
+          GH_TOKEN: ${{ github.token }}
