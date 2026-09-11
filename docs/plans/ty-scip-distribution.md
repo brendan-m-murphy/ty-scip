@@ -154,8 +154,9 @@ Before the first binary preview:
 
 ## Immediate sequence
 
-1. Make the frozen OpenGHG and SCIP consumer gate reproducible in issue #5.
-2. Build release-candidate wheels in issue #7, without publishing.
+1. Build release-candidate wheels in issue #7, without publishing.
+2. Run the frozen OpenGHG and SCIP consumer gate against the packaged Linux
+   candidate.
 3. Update the README with only the install commands and platforms proved by
    those candidates, then publish after the artifact and OpenGHG gates pass.
 

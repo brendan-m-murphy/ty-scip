@@ -121,12 +121,13 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Make the frozen OpenGHG differential and SCIP consumer gate reproducible, then
-build and validate the hosted release-candidate wheel matrix. The dotted-import
-correction, bounded `scip-python`-style CLI, local Maturin binary-wheel smoke
-test, PEP 639 metadata, reviewed locked notice bundle, wheel artifact checks,
-and hosted Linux/macOS/Windows core gates are complete. PyPI publication still
-needs the hosted wheel matrix and release-candidate SCIP/OpenGHG gate.
+Build and validate the hosted release-candidate wheel matrix, then publish the
+first PyPI/GitHub release. The frozen OpenGHG differential and consumer gate,
+dotted-import correction, bounded `scip-python`-style CLI, local Maturin
+binary-wheel smoke test, PEP 639 metadata, reviewed locked notice bundle, wheel
+artifact checks, and hosted Linux/macOS/Windows core gates are complete. PyPI
+publication still needs the hosted wheel matrix and its packaged-binary
+SCIP/OpenGHG gate.
 Installed-package ownership, complete project-walk diagnostics, and
 method-override relationships stay upstream API requests. The remaining 39
 first-party ambiguities stay unresolved until a typed bulk occurrence API can
@@ -134,6 +135,14 @@ remove constructor/`__call__` expansion without a first-target heuristic.
 
 ## Progress log
 
+- **2026-09-11:** Made the frozen OpenGHG comparison an executable release
+  gate. It clones exact source and reference revisions, requires byte-identical
+  candidate runs, checks decoded SCIP structure and the converted query
+  database, runs the issue 1714 consumer probes, and locks the complete
+  scheme-independent target/relationship differential by SHA-256. The retained
+  local run passed with 281 documents, 22,975 definitions, 53,264 references,
+  542 query chunks, and 20,586 mentions; only the six reviewed
+  property/inherited-receiver target divergences remain.
 - **2026-09-09:** Activated hosted CI and added macOS/Windows core jobs while
   keeping lint and MSRV checks on Linux. Windows first exposed a long Ruff
   checkout path, then CRLF conversion of byte-offset fixtures; the fixes are a
