@@ -1,6 +1,6 @@
 # ty-scip distribution plan
 
-Status: **Local packaging proved; ready for public remote and hosted CI**
+Status: **License and hosted platform gates proved; release-candidate gate next**
 Started: 2026-09-09
 
 ## Goal
@@ -124,15 +124,18 @@ Before the first binary preview:
    OpenGHG comparison; imported module spans must not collapse to the root
    package.
 2. Add the small CLI compatibility surface and migration documentation.
-3. Run ordinary CI on Linux, macOS, and Windows; do not claim Windows until
-   atomic replacement, URI, and smoke tests pass there.
+3. Run ordinary CI on Linux and macOS. Windows is not a first-preview blocker;
+   include and claim it only after atomic replacement, URI, and smoke tests
+   pass there.
 4. Generate and review a locked third-party notice bundle covering Ruff/ty,
    embedded typeshed data, and transitive binary dependencies.
 5. Build and install every wheel, then run deterministic fixture and SCIP
    consumer checks against the installed executable.
 6. Run the frozen OpenGHG scale, structural-integrity, differential, and
    `scip-cli` query gates against the release candidate.
-7. Tag `v0.1.0`; record the pinned Ruff commit in release notes. Deliberate
+7. Update the README's status and install commands from the exact supported
+   wheel matrix. This is a pre-publication change, not post-release cleanup.
+8. Tag `v0.1.0`; record the pinned Ruff commit in release notes. Deliberate
    symbol-identity changes require at least a pre-1.0 minor version and a
    changelog warning.
 
@@ -151,13 +154,10 @@ Before the first binary preview:
 
 ## Immediate sequence
 
-1. Create `brendan-m-murphy/ty-scip`, push, and exercise hosted platform CI.
-2. Add the platform wheel matrix and resolve Windows output-replacement
-   semantics before claiming Windows support.
-3. Generate and review `THIRD_PARTY_NOTICES`, add PEP 639 license-file
-   metadata, and require license texts in every wheel.
-4. Build release-candidate wheels and publish only after the installed-wheel,
-   SCIP consumer, and frozen OpenGHG gates pass on the release artifacts.
+1. Make the frozen OpenGHG and SCIP consumer gate reproducible in issue #5.
+2. Build release-candidate wheels in issue #7, without publishing.
+3. Update the README with only the install commands and platforms proved by
+   those candidates, then publish after the artifact and OpenGHG gates pass.
 
 Create the public remote from the repository root with:
 
@@ -176,6 +176,16 @@ that history without generating a conflicting initial commit.
 
 ## Implementation results
 
+- **2026-09-09:** Added hosted macOS and Windows core test/release-build jobs
+  without duplicating formatting, Clippy, or MSRV work. The first Windows run
+  exposed Git's default path limit while fetching Ruff; enabling long paths
+  allowed the full build to reach tests. That run then exposed CRLF checkout
+  drift in byte-offset fixtures, so `.gitattributes` now keeps repository text
+  at LF. The corrected PR job passed all core tests and a release build on
+  Windows Server 2025 x86-64; macOS 26.6 ARM64 and Ubuntu 24.04 x86-64 passed
+  in the same run. Windows wheels remain optional for the first preview until
+  issue #7 validates the packaged artifact.
+
 - **2026-09-09:** Added the optional `index` command, `--output`, `--cwd`, and
   `--quiet` while retaining the original 0.x shorthand. Added an explicit
   migration guide and rejection tests for unsupported `scip-python` options.
@@ -193,7 +203,10 @@ that history without generating a conflicting initial commit.
   made that boundary explicit. The full test, formatting, Clippy, release, and
   Rust 1.96 minimum-version gates pass.
 - **2026-09-09:** The locally built wheel is a valid ABI-independent native
-  binary wheel and contains a CycloneDX SBOM, but it is not a PyPI release
-  candidate. It still needs PEP 639 license-file metadata, the project license
-  and reviewed third-party notices inside the artifact, hosted platform builds,
-  and release-CI provenance without workstation-local paths.
+  binary wheel. Added PEP 639 metadata and a deterministic notice generator
+  covering the locked target matrix, Ruff's full inherited-code notices, and
+  embedded typeshed. The wheel contains `LICENSE` and
+  `THIRD_PARTY_NOTICES`, installs in an isolated environment, and reports the
+  Cargo-sourced version. Disabled Maturin's optional path-bearing SBOM until it
+  can represent the root package without workstation-local provenance. Hosted
+  platform builds and the release-candidate SCIP gates remain.

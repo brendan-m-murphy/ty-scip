@@ -1,6 +1,6 @@
 # ty-scip public-readiness plan
 
-Status: **GitHub-source ready; awaiting remote and hosted CI**
+Status: **License and hosted platform gates proved; release-candidate gate next**
 Started: 2026-09-08
 
 ## Goal
@@ -122,18 +122,36 @@ build. It reports 9,754 unresolved identifier queries, 39 ambiguous queries,
 
 ## Current next step
 
-Create and push the public GitHub remote, then use its hosted CI to add the
-platform wheel matrix. The dotted-import correction, bounded
-`scip-python`-style CLI, and local Maturin binary-wheel smoke test are complete.
-The source repository is ready to publish; PyPI publication is not. A binary
-release additionally needs PEP 639 license-file metadata, a generated and
-reviewed locked transitive notice bundle, artifact license checks, and hosted
-platform gates. Installed-package ownership, complete project-walk diagnostics,
-and method-override relationships stay upstream API requests. The remaining 39
+Make the frozen OpenGHG differential and SCIP consumer gate reproducible, then
+build and validate the hosted release-candidate wheel matrix. The dotted-import
+correction, bounded `scip-python`-style CLI, local Maturin binary-wheel smoke
+test, PEP 639 metadata, reviewed locked notice bundle, wheel artifact checks,
+and hosted Linux/macOS/Windows core gates are complete. PyPI publication still
+needs the hosted wheel matrix and release-candidate SCIP/OpenGHG gate.
+Installed-package ownership, complete project-walk diagnostics, and
+method-override relationships stay upstream API requests. The remaining 39
 first-party ambiguities stay unresolved until a typed bulk occurrence API can
 remove constructor/`__call__` expansion without a first-target heuristic.
 
 ## Progress log
+
+- **2026-09-09:** Activated hosted CI and added macOS/Windows core jobs while
+  keeping lint and MSRV checks on Linux. Windows first exposed a long Ruff
+  checkout path, then CRLF conversion of byte-offset fixtures; the fixes are a
+  Git long-path setting and repository-wide LF normalization. No
+  Windows-specific runtime dependency or output implementation was added. The
+  corrected job passed all core tests and a release build on Windows Server
+  2025 x86-64; the same run passed on macOS 26.6 ARM64 and Ubuntu 24.04 x86-64.
+  Windows remains optional for the first wheel preview until issue #7 validates
+  that packaged artifact.
+- **2026-09-09:** Completed the binary-license gate. A deterministic
+  `cargo-about`-backed generator inventories the locked cross-platform graph
+  and includes Ruff's complete inherited-code notice plus the Apache-licensed
+  typeshed payload embedded by `ty_vendored`. Maturin emits PEP 639 metadata
+  and packages both legal files. A dependency-free validator inspects the
+  wheel, rejects path-bearing metadata and SBOMs, installs it in an isolated
+  environment, and runs the packaged command. The optional Maturin SBOM is
+  omitted until its local root-package path can be sanitized.
 
 - **2026-09-08:** Promoted the completed MVP into this public-readiness plan.
   Started parallel audits of `scip-python`, the pinned public ty/Ruff surface,

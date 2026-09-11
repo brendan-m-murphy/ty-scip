@@ -159,11 +159,19 @@ and the output path is neither created nor replaced; parser errors in readable
 files instead use Ruff's recovered tree and are reported in the summary.
 
 The MIT-licensed Cargo package is therefore marked `publish = false`, the
-ty/Ruff dependencies are pinned Git crates, and there are no release binaries. macOS
-is exercised locally; Windows behavior is not claimed until file-URI and
-replacement-rename behavior are tested in CI. A locked transitive third-party
-notice inventory for binary artifacts and an automated SCIP consumer gate are
-required before calling binary distribution release-ready.
+ty/Ruff dependencies are pinned Git crates, and there are no release binaries.
+Hosted core tests and release builds pass with Rust 1.98.1 on Ubuntu 24.04
+x86-64, macOS 26.6 ARM64, and Windows Server 2025 x86-64. The Windows run
+covers existing-output replacement, failed-write temporary-file cleanup,
+percent-encoded project-root URIs, and deterministic repeated indexing. Wheels
+carry PEP 639
+license metadata plus the project license and a generated, locked third-party
+notice bundle covering Ruff/ty, embedded typeshed, and transitive dependencies.
+The optional Maturin SBOM is disabled for the preview because its root package
+identity included build-machine paths; it can return when that provenance can
+be emitted without local paths. The multi-platform wheel matrix and SCIP
+consumer gates remain required before calling binary distribution
+release-ready.
 
 The pinned crates have no external API-stability guarantee. Pin updates are
 deliberate compatibility work, not routine dependency bumps.
@@ -185,11 +193,13 @@ For a Ruff pin update:
 1. Change every direct Ruff/ty dependency to the same full commit in
    `Cargo.toml`; mixed revisions are unsupported.
 2. Regenerate and commit `Cargo.lock`.
-3. Resolve public API changes without copying private analyzer logic.
-4. Run the ordinary gate above, including decoded-SCIP positive and false-link
+3. Regenerate `THIRD_PARTY_NOTICES` with `python scripts/licenses.py` and
+   review the Ruff, typeshed, Unicode, BSD, and MPL license changes.
+4. Resolve public API changes without copying private analyzer logic.
+5. Run the ordinary gate above, including decoded-SCIP positive and false-link
    fixtures.
-5. Re-run the frozen OpenGHG scale check and record time, index size,
+6. Re-run the frozen OpenGHG scale check and record time, index size,
    definition/reference/omission counters, deterministic bytes, lint, and the
    isolated search/members/references/dependencies results.
-6. Compare the semantic edges with `scip-python`; do not require identical
+7. Compare the semantic edges with `scip-python`; do not require identical
    scheme-specific symbol strings.
