@@ -26,6 +26,7 @@ jobs:
       - run: cargo fetch --locked
       - run: cargo install cargo-about --locked --version 0.9.2 --features cli
       - run: python scripts/licenses.py --check
+      - run: python scripts/test_openghg_release_gate.py
       - run: python -m pip install maturin==1.15.0
       - run: maturin build --release --locked
       - run: python scripts/check_wheel.py target/wheels/*.whl
