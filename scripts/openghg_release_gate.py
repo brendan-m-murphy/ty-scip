@@ -32,7 +32,11 @@ SCIP_PYTHON_URL = "https://github.com/sourcegraph/scip-python.git"
 SCIP_PYTHON_REVISION = "468008597e371ed4abac73ea2a14a08bbd16c7d1"
 RUFF_REVISION = "12132db2885084f4b87aafc5908e336e7b5e8fbd"
 EXPECTED_DOCUMENTS = 281
-EXPECTED_DIFFERENTIAL_SHA256 = "55b8e718920ea47b8fa710d926b6d48894338ec1a5e6ddc98f2b2587915e6c72"
+EXPECTED_DIFFERENTIAL_SHA256 = "8d3b6ecfa58c2f944a09b1d4bf135f10b00a61740f55cdf45c6443da8ba962dc"
+KNOWN_LINT_RELATIONSHIP = re.compile(
+    r"^(?:\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} )?error: symbol .+ "
+    r"has a relationship to .+, but couldn't find .+ in external symbols or some other document$"
+)
 
 # These are genuine property/inherited-receiver disagreements, not regressions.
 KNOWN_DIVERGENCES = frozenset(
@@ -57,6 +61,20 @@ def _command(name: str) -> str:
     if path is None:
         raise GateError(f"required command is not on PATH: {name}")
     return path
+
+
+def _verify_ruff_revision() -> None:
+    """Verify that recorded provenance matches every direct Ruff/ty dependency."""
+    cargo_toml = Path(__file__).resolve().parents[1] / "Cargo.toml"
+    revisions = set(
+        re.findall(
+            r'^(?:ruff_|ty_)\w+\s*=.*\brev\s*=\s*"([0-9a-f]+)"',
+            cargo_toml.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+    )
+    if revisions != {RUFF_REVISION}:
+        raise GateError(f"Cargo.toml Ruff/ty revisions do not match recorded pin: {revisions!r}")
 
 
 def _run(
@@ -140,6 +158,16 @@ def _definitions(
     return {symbol: frozenset(locations) for symbol, locations in definitions.items()}
 
 
+def _definition_locations(index: dict[str, Any]) -> frozenset[tuple[str, tuple[int, ...]]]:
+    """Return every first-party definition location, independent of symbol scheme."""
+    return frozenset(
+        (document["relative_path"], tuple(occurrence["range"]))
+        for document in index.get("documents", [])
+        for occurrence in document.get("occurrences", [])
+        if occurrence.get("symbol_roles", 0) & 1
+    )
+
+
 def _projection(
     index: dict[str, Any],
 ) -> dict[tuple[str, tuple[int, ...]], frozenset[tuple[str, tuple[int, ...]]]]:
@@ -198,9 +226,11 @@ def _relationship(
     return {"source": _location(value[0]), "target": _location(value[1]), "flags": value[2]}
 
 
-def _differential(
+def _differential(  # noqa: PLR0913
     candidate: dict[tuple[str, tuple[int, ...]], frozenset[tuple[str, tuple[int, ...]]]],
     reference: dict[tuple[str, tuple[int, ...]], frozenset[tuple[str, tuple[int, ...]]]],
+    candidate_definitions: frozenset[tuple[str, tuple[int, ...]]],
+    reference_definitions: frozenset[tuple[str, tuple[int, ...]]],
     candidate_relationships: frozenset,
     reference_relationships: frozenset,
 ) -> tuple[dict[str, Any], frozenset[tuple[str, tuple[int, ...]]]]:
@@ -228,6 +258,12 @@ def _differential(
         "candidate_projected_references": len(candidate),
         "reference_projected_references": len(reference),
         "shared_projected_references": len(shared),
+        "candidate_only_definitions": [
+            _location(location) for location in sorted(candidate_definitions - reference_definitions)
+        ],
+        "reference_only_definitions": [
+            _location(location) for location in sorted(reference_definitions - candidate_definitions)
+        ],
         "candidate_only_sources": [
             _location(source) for source in sorted(candidate_sources - reference_sources)
         ],
@@ -252,21 +288,31 @@ def _integrity(index: dict[str, Any]) -> dict[str, int]:  # noqa: C901, PLR0912
         raise GateError(f"candidate contains {len(documents)} documents; expected {EXPECTED_DOCUMENTS}")
 
     all_information = {item["symbol"] for item in index.get("external_symbols", [])}
+    all_information.update(item["symbol"] for document in documents for item in document.get("symbols", []))
     definition_symbols = {
         occurrence["symbol"]
         for document in documents
         for occurrence in document.get("occurrences", [])
         if occurrence.get("symbol_roles", 0) & 1
     }
+    definition_keys = {
+        _symbol_key(document["relative_path"], occurrence["symbol"])
+        for document in documents
+        for occurrence in document.get("occurrences", [])
+        if occurrence.get("symbol_roles", 0) & 1
+    }
     definitions = references = 0
     missing_definitions: list[str] = []
+    missing_occurrence_information: list[str] = []
+    missing_reference_definitions: list[str] = []
+    missing_local_definitions: list[str] = []
     missing_relationships: list[str] = []
+    missing_relationship_sources: list[str] = []
     missing_relationship_definitions: list[str] = []
     missing_stdlib: list[str] = []
     for document in documents:
         path = document["relative_path"]
         local_information = {item["symbol"] for item in document.get("symbols", [])}
-        all_information.update(local_information)
         for occurrence in document.get("occurrences", []):
             symbol = occurrence["symbol"]
             if occurrence.get("symbol_roles", 0) & 1:
@@ -275,11 +321,27 @@ def _integrity(index: dict[str, Any]) -> dict[str, int]:  # noqa: C901, PLR0912
                     missing_definitions.append(f"{path}:{occurrence['range']} {symbol}")
             else:
                 references += 1
+                if symbol.startswith("local ") and _symbol_key(path, symbol) not in definition_keys:
+                    missing_local_definitions.append(f"{path}:{occurrence['range']} {symbol}")
+            if not symbol.startswith("local ") and symbol not in all_information:
+                missing_occurrence_information.append(f"{path}:{occurrence['range']} {symbol}")
+            if (
+                not occurrence.get("symbol_roles", 0) & 1
+                and symbol.startswith("ty-scip python openghg ")
+                and symbol not in definition_symbols
+            ):
+                missing_reference_definitions.append(f"{path}:{occurrence['range']} {symbol}")
             if symbol.startswith("ty-scip python python-stdlib ") and symbol not in all_information:
                 missing_stdlib.append(f"{path}:{occurrence['range']} {symbol}")
 
     for document in documents:
         for information in document.get("symbols", []):
+            if (
+                information.get("relationships")
+                and information["symbol"].startswith("ty-scip python openghg ")
+                and information["symbol"] not in definition_symbols
+            ):
+                missing_relationship_sources.append(information["symbol"])
             for relationship in information.get("relationships", []):
                 target = relationship.get("symbol", "")
                 if target and target not in all_information:
@@ -289,7 +351,11 @@ def _integrity(index: dict[str, Any]) -> dict[str, int]:  # noqa: C901, PLR0912
 
     problems = {
         "definitions without same-document symbol information": missing_definitions,
+        "non-local occurrences without symbol information": missing_occurrence_information,
+        "first-party references without target definitions": missing_reference_definitions,
+        "document-local references without definitions": missing_local_definitions,
         "relationships without target symbol information": missing_relationships,
+        "first-party relationship sources without definitions": missing_relationship_sources,
         "first-party relationships without target definitions": missing_relationship_definitions,
         "stdlib occurrences without external symbol information": missing_stdlib,
     }
@@ -423,6 +489,17 @@ def _validate_database_metrics(metrics: dict[str, int]) -> None:
         raise GateError(f"scip-cli conversion produced empty tables: {empty}")
 
 
+def _validate_lint(result: subprocess.CompletedProcess[str]) -> int:
+    """Allow only SCIP 0.8's known false cross-document relationship diagnostics."""
+    lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
+    unexpected = [line for line in lines if KNOWN_LINT_RELATIONSHIP.fullmatch(line) is None]
+    if unexpected or (result.returncode == 0 and lines) or (result.returncode != 0 and not lines):
+        raise GateError(f"SCIP 0.8 lint reported unexpected diagnostics: {unexpected or lines!r}")
+    if result.returncode == 0:
+        return 0
+    return len(lines)
+
+
 def _sha256(path: Path) -> str:
     """Return the SHA-256 digest of a file."""
     digest = hashlib.sha256()
@@ -465,6 +542,7 @@ def _main() -> int:  # noqa: C901, PLR0912, PLR0915
     version = candidate_version.stdout.strip()
     if not re.fullmatch(r"ty-scip \d+\.\d+\.\d+", version):
         raise GateError(f"unexpected candidate version output: {version!r}")
+    _verify_ruff_revision()
     _command("git")
     npm, node, scip_cli = (_command(name) for name in ("npm", "node", "scip-cli"))
 
@@ -574,16 +652,20 @@ def _main() -> int:  # noqa: C901, PLR0912, PLR0915
         )
         candidate_data = _load(candidate_json)
         integrity = _integrity(candidate_data)
+        candidate_definitions = _definition_locations(candidate_data)
         candidate_projection = _projection(candidate_data)
         candidate_relationships = _relationships(candidate_data)
         del candidate_data
         reference_data = _load(reference_json)
+        reference_definitions = _definition_locations(reference_data)
         reference_projection = _projection(reference_data)
         reference_relationships = _relationships(reference_data)
         del reference_data
         differential, missing_reference_targets = _differential(
             candidate_projection,
             reference_projection,
+            candidate_definitions,
+            reference_definitions,
             candidate_relationships,
             reference_relationships,
         )
@@ -603,6 +685,7 @@ def _main() -> int:  # noqa: C901, PLR0912, PLR0915
             )
 
         lint, lint_seconds = _run([scip, "lint", str(candidate_a)], env=consumer_env, check=False)
+        accepted_lint_diagnostics = _validate_lint(lint)
         _consumer_gate(scip_cli, openghg, consumer_env)
 
         metrics = {
@@ -627,6 +710,8 @@ def _main() -> int:  # noqa: C901, PLR0912, PLR0915
             },
             "differential": {
                 "sha256": differential_sha256,
+                "candidate_only_definitions": len(differential["candidate_only_definitions"]),
+                "reference_only_definitions": len(differential["reference_only_definitions"]),
                 "candidate_only_sources": len(differential["candidate_only_sources"]),
                 "reference_only_sources": len(differential["reference_only_sources"]),
                 "shared_projected_references": differential["shared_projected_references"],
@@ -644,7 +729,7 @@ def _main() -> int:  # noqa: C901, PLR0912, PLR0915
             },
             "scip_0_8_lint": {
                 "exit_code": lint.returncode,
-                "output_lines": len((lint.stdout + lint.stderr).splitlines()),
+                "accepted_relationship_diagnostics": accepted_lint_diagnostics,
             },
         }
         (work / "metrics.json").write_text(

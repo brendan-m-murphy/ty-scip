@@ -14,6 +14,7 @@ release thresholds.
 
 - [uv](https://docs.astral.sh/uv/);
 - Git;
+- Python 3;
 - Node.js and npm;
 - network access to GitHub and the npm registry; and
 - the candidate `ty-scip` executable to test.
@@ -41,3 +42,8 @@ standard-library occurrence to have the corresponding symbol information.
 The complete deterministic differential is locked by SHA-256. Any semantic
 change therefore stops the gate until `differential.json` has been reviewed and
 the expected digest is deliberately updated.
+
+The canonical hosted run uses Ubuntu 24.04 x86-64, Python 3.12, and Node.js 20.
+The current baseline has one reference-only definition and six shared source
+ranges missing a reference target; the full report also retains every
+candidate-only/reference-only source, target, definition, and relationship.

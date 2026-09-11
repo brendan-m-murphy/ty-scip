@@ -141,8 +141,10 @@ remove constructor/`__call__` expansion without a first-target heuristic.
   database, runs the issue 1714 consumer probes, and locks the complete
   scheme-independent target/relationship differential by SHA-256. The retained
   local run passed with 281 documents, 22,975 definitions, 53,264 references,
-  542 query chunks, and 20,586 mentions; only the six reviewed
-  property/inherited-receiver target divergences remain.
+  542 query chunks, and 20,586 mentions. Six shared source ranges are missing
+  reference targets because of the reviewed property/inherited-receiver cases;
+  the complete definition, source, target, and relationship deltas remain in
+  the digest-locked report.
 - **2026-09-09:** Activated hosted CI and added macOS/Windows core jobs while
   keeping lint and MSRV checks on Linux. Windows first exposed a long Ruff
   checkout path, then CRLF conversion of byte-offset fixtures; the fixes are a
