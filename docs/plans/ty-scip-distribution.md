@@ -1,6 +1,6 @@
 # ty-scip distribution plan
 
-Status: **License and hosted platform gates proved; release-candidate gate next**
+Status: **Release candidate proved; PyPI trusted publisher and v0.1.0 tag next**
 Started: 2026-09-09
 
 ## Goal
@@ -156,11 +156,11 @@ Before the first binary preview:
 
 ## Immediate sequence
 
-1. Build release-candidate wheels in issue #7, without publishing.
-2. Run the frozen OpenGHG and SCIP consumer gate against the packaged Linux
-   candidate.
-3. Update the README with only the install commands and platforms proved by
-   those candidates, then publish after the artifact and OpenGHG gates pass.
+1. Configure the `ty-scip` pending trusted publisher on PyPI.
+2. Merge the README status and install commands proved by the candidate run.
+3. Tag `v0.1.0`; let the same workflow rebuild, revalidate, and publish the
+   wheels and checksums to PyPI and GitHub.
+4. Verify installation from PyPI in a clean environment and close issue #7.
 
 Create the public remote from the repository root with:
 
@@ -178,6 +178,15 @@ history already contains those files, and `--source=.` plus `--push` publishes
 that history without generating a conflicting initial commit.
 
 ## Implementation results
+
+- **2026-09-11:** The hosted release candidate built and validated five native
+  wheels: manylinux 2.17 x86-64 and ARM64, macOS x86-64 and ARM64, and Windows
+  x86-64. Each installed in a clean environment and produced byte-identical
+  nonempty fixture indexes. The packaged Linux x86-64 wheel passed the frozen
+  OpenGHG differential and `scip-cli` consumer gate with 281 documents, 22,975
+  definitions, 53,264 references, 542 query chunks, and 20,586 mentions. The
+  workflow also generated matching SHA-256 checksums. Publishing was correctly
+  skipped for the manual candidate run.
 
 - **2026-09-09:** Added hosted macOS and Windows core test/release-build jobs
   without duplicating formatting, Clippy, or MSRV work. The first Windows run
