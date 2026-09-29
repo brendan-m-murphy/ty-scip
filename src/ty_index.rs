@@ -290,14 +290,14 @@ pub(crate) fn index(
 
     let mut files = db.project().files(&db).iter().collect::<Vec<_>>();
     files.sort_by_key(|file| file.path(&db).to_string());
-    let file_indices = files
-        .iter()
-        .enumerate()
-        .map(|(index, file)| (*file, index))
-        .collect::<HashMap<_, _>>();
     let mut data = Vec::with_capacity(files.len());
+    // Files that survived module-name mapping, paired with their position in `data`.
+    // Built as we go so a skipped file never leaves a hole: `file_indices` and `data`
+    // stay index-aligned, which every later lookup depends on.
+    let mut included = Vec::with_capacity(files.len());
     let mut syntax_errors = 0;
     let mut unsupported_syntax_errors = 0;
+    let mut unimportable_paths: Vec<PathBuf> = Vec::new();
     for &file in &files {
         let path = file
             .path(&db)
@@ -319,8 +319,10 @@ pub(crate) fn index(
         syntax_errors += parsed.errors().len();
         unsupported_syntax_errors += parsed.unsupported_syntax_errors().len();
         let hierarchy = ty_ide::document_symbols(&db, program_file).to_hierarchical();
-        let module = file_to_module(&db, program_file.resolver_file(&db))
-            .ok_or_else(|| format!("project file has no importable module name: {path}"))?;
+        let Some(module) = file_to_module(&db, program_file.resolver_file(&db)) else {
+            unimportable_paths.push(path.as_std_path().to_path_buf());
+            continue;
+        };
         let module_descriptors = module
             .name(&db)
             .components()
@@ -374,6 +376,7 @@ pub(crate) fn index(
         };
         let (locals, semantic_bindings, canonical_definition_ranges) =
             allocate_semantic_symbols(&db, program_file, &source, &mut globals);
+        included.push(file);
         data.push(FileData {
             relative_path,
             source,
@@ -387,7 +390,12 @@ pub(crate) fn index(
         });
     }
 
-    let relationships = collect_relationships(&db, &files, &file_indices, &data);
+    let file_indices = included
+        .iter()
+        .enumerate()
+        .map(|(index, file)| (*file, index))
+        .collect::<HashMap<_, _>>();
+    let relationships = collect_relationships(&db, &included, &file_indices, &data);
     for (file, relationships) in data.iter_mut().zip(relationships) {
         file.relationships = relationships;
     }
@@ -402,7 +410,7 @@ pub(crate) fn index(
     let mut external_symbols = HashMap::<File, HashMap<TextRange, SymbolData>>::new();
     let mut external_references = vec![Vec::new(); data.len()];
     for (source_index, file_data) in data.iter().enumerate() {
-        let program_file = db.program_file(files[source_index]);
+        let program_file = db.program_file(included[source_index]);
         let ranges = {
             let module = parsed_module(&db, program_file.python_file(&db)).load(&db);
             let mut visitor = IdentifierRanges::default();
@@ -622,6 +630,20 @@ pub(crate) fn index(
         });
         references.dedup_by(|left, right| left.0 == right.0 && left.1.symbol == right.1.symbol);
         file.external_references = references;
+    }
+
+    if !unimportable_paths.is_empty() {
+        for path in &unimportable_paths {
+            eprintln!(
+                "warning: skipping {} (path cannot form an importable module name)",
+                path.display()
+            );
+        }
+        eprintln!(
+            "warning: indexed {} file(s); skipped {} file(s) whose path is not importable",
+            data.len(),
+            unimportable_paths.len()
+        );
     }
 
     Ok(IndexData {
