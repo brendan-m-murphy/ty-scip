@@ -47,6 +47,7 @@ pub(crate) struct IndexData {
     pub(crate) syntax_errors: usize,
     pub(crate) unsupported_syntax_errors: usize,
     pub(crate) samples: Vec<String>,
+    pub(crate) unimportable_paths: Vec<PathBuf>,
 }
 
 #[derive(Default)]
@@ -632,20 +633,6 @@ pub(crate) fn index(
         file.external_references = references;
     }
 
-    if !unimportable_paths.is_empty() {
-        for path in &unimportable_paths {
-            eprintln!(
-                "warning: skipping {} (path cannot form an importable module name)",
-                path.display()
-            );
-        }
-        eprintln!(
-            "warning: indexed {} file(s); skipped {} file(s) whose path is not importable",
-            data.len(),
-            unimportable_paths.len()
-        );
-    }
-
     Ok(IndexData {
         root,
         files: data,
@@ -656,6 +643,7 @@ pub(crate) fn index(
         syntax_errors,
         unsupported_syntax_errors,
         samples,
+        unimportable_paths,
     })
 }
 

@@ -88,3 +88,46 @@ fn skips_unimportable_paths_and_keeps_symbol_links_aligned() {
     assert_eq!(first, fs::read(&index).expect("reread SCIP index"));
     fs::remove_file(&index).expect("remove SCIP index");
 }
+
+#[test]
+/// Verifies --quiet suppresses the unimportable-path skip warnings, which are
+/// indexing diagnostics routed through the caller's gate, while the run still
+/// succeeds and still writes the index.
+fn quiet_suppresses_unimportable_path_warnings() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/unimportable_paths");
+    let index = std::env::temp_dir().join(format!(
+        "ty-scip-unimportable-paths-quiet-{}.scip",
+        std::process::id()
+    ));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ty-scip"))
+        .arg("--quiet")
+        .arg(&root)
+        .arg(&index)
+        .output()
+        .expect("run ty-scip");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(
+        output.stderr.is_empty(),
+        "--quiet must suppress every indexing diagnostic, including skip warnings: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let decoded = support::read_index(&index);
+    support::assert_index_integrity(&decoded);
+    assert_eq!(
+        decoded
+            .documents
+            .iter()
+            .map(|document| document.relative_path.as_str())
+            .collect::<Vec<_>>(),
+        ["app/core.py", "consumer.py"],
+        "--quiet must not change what is indexed"
+    );
+    fs::remove_file(&index).expect("remove SCIP index");
+}

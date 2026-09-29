@@ -152,6 +152,18 @@ fn run() -> Result<(), String> {
         for sample in &index.samples {
             eprintln!("{sample}");
         }
+        for path in &index.unimportable_paths {
+            eprintln!(
+                "warning: skipping {} (path cannot form an importable module name)",
+                path.display()
+            );
+        }
+        if !index.unimportable_paths.is_empty() {
+            eprintln!(
+                "warning: skipped {} file(s) whose path is not importable",
+                index.unimportable_paths.len()
+            );
+        }
     }
 
     let mut references = 0;
